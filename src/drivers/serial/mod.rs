@@ -1,13 +1,17 @@
-use crate::protocol::{read_all_messages, Protocol};
-use anyhow::Result;
-use std::io::{self, Read, Write};
 use std::sync::Arc;
-use std::time::Duration;
-use tokio::sync::broadcast;
-use tokio_serial;
+
+use anyhow::Result;
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt, ReadHalf, WriteHalf},
+    sync::{broadcast, Mutex},
+};
+use tokio_serial::{self, SerialPortBuilderExt, SerialStream};
 use tracing::*;
 
-use crate::drivers::{Driver, DriverExt, DriverInfo};
+use crate::{
+    drivers::{Driver, DriverExt, DriverInfo},
+    protocol::{read_all_messages, Protocol},
+};
 
 pub struct Serial {
     pub port_name: String,
@@ -23,17 +27,16 @@ impl Serial {
         }
     }
 
-    #[instrument(level = "debug", skip(port))]
+    #[instrument(level = "debug", skip(reader, hub_sender))]
     async fn serial_receive_task(
-        mut port: Box<dyn tokio_serial::SerialPort>,
-        hub_sender: Arc<broadcast::Sender<Protocol>>,
+        port_name: &str,
+        reader: Arc<Mutex<ReadHalf<SerialStream>>>,
+        hub_sender: broadcast::Sender<Protocol>,
     ) -> Result<()> {
         let mut buf = vec![0; 1024];
-        let port_name = port.name().unwrap_or("unknown".to_string());
 
         loop {
-            tokio::time::sleep(tokio::time::Duration::from_micros(1)).await;
-            match port.read(&mut buf) {
+            match reader.lock().await.read(&mut buf).await {
                 // We got something
                 Ok(bytes_received) if bytes_received > 0 => {
                     read_all_messages("serial", &mut buf, |message| async {
@@ -58,15 +61,16 @@ impl Serial {
         Ok(())
     }
 
-    #[instrument(level = "debug", skip(port))]
+    #[instrument(level = "debug", skip(writer, hub_receiver))]
     async fn serial_send_task(
-        mut port: Box<dyn tokio_serial::SerialPort>,
+        port_name: &str,
+        writer: Arc<Mutex<WriteHalf<SerialStream>>>,
         mut hub_receiver: broadcast::Receiver<Protocol>,
     ) -> Result<()> {
         loop {
             match hub_receiver.recv().await {
                 Ok(message) => {
-                    if let Err(error) = port.write_all(&message.raw_bytes()) {
+                    if let Err(error) = writer.lock().await.write_all(&message.raw_bytes()).await {
                         error!("Failed to send serial message: {error:?}");
                         break;
                     }
@@ -86,11 +90,16 @@ impl Driver for Serial {
     async fn run(&self, hub_sender: broadcast::Sender<Protocol>) -> Result<()> {
         let port_name = self.port_name.clone();
 
-        let port = match tokio_serial::new(&port_name, self.baud_rate)
-            .timeout(Duration::from_millis(1000))
-            .open()
+        let (read, write) = match tokio_serial::new(&port_name, self.baud_rate)
+            .timeout(tokio::time::Duration::from_secs(1))
+            .open_native_async()
         {
-            Ok(port) => port,
+            Ok(port) => {
+                let (read, write) = tokio::io::split(port);
+                let read = Arc::new(Mutex::new(read));
+                let write = Arc::new(Mutex::new(write));
+                (read, write)
+            }
             Err(error) => {
                 error!("Failed to open serial port {port_name:?}: {error:?}");
                 return Err(error.into());
@@ -100,16 +109,16 @@ impl Driver for Serial {
         debug!("Serial successfully opened port {port_name:?}");
 
         loop {
-            let hub_sender = Arc::new(hub_sender.clone());
+            let hub_sender = hub_sender.clone();
             let hub_receiver = hub_sender.subscribe();
 
             tokio::select! {
-                result = Serial::serial_send_task(port.try_clone()?, hub_receiver) => {
+                result = Serial::serial_send_task(&port_name, write.clone(), hub_receiver) => {
                     if let Err(e) = result {
                         error!("Error in serial receive task for {port_name}: {e:?}");
                     }
                 }
-                result = Serial::serial_receive_task(port.try_clone()?, hub_sender) => {
+                result = Serial::serial_receive_task(&port_name, read.clone(), hub_sender.clone()) => {
                     if let Err(e) = result {
                         error!("Error in serial send task for {port_name}: {e:?}");
                     }
