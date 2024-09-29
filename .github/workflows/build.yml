@@ -53,10 +53,25 @@ jobs:
 
     - uses: actions/checkout@master
     - name: Build
+      if: matrix.os != 'ubuntu-latest'
       uses: houseabsolute/actions-rust-cross@v0
       with:
         target: ${{ matrix.TARGET }}
         args: "--locked --release"
+
+    - name: Install build dependencies - Rustup
+      if: matrix.os == 'ubuntu-latest'
+      run: |
+        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- --default-toolchain stable --profile minimal --target ${{ matrix.TARGET }} -y
+        echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+
+    - name: Install build dependencies - Cross
+      if: matrix.os == 'ubuntu-latest'
+      run: cargo install cross
+
+    - name: Install build dependencies - Cross
+      if: matrix.os == 'ubuntu-latest'
+      run: cross build --release --locked --target ${{matrix.target}} --verbose
 
     - name: Rename
       run: cp target/${{ matrix.TARGET }}/release/${{ github.event.repository.name }}${{ matrix.EXTENSION }} ${{ github.event.repository.name }}-${{ matrix.TARGET }}${{ matrix.EXTENSION }}
