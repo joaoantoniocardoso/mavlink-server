@@ -36,7 +36,6 @@ jobs:
       run: cargo test --all-features --verbose --locked -- --nocapture
 
   build:
-    needs: test
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -78,12 +77,18 @@ jobs:
 
     - name: Install build dependencies - Rustup
       run: |
-        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- --default-toolchain stable --profile minimal --target ${{ matrix.TARGET }} -y
+        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- --default-toolchain stable --profile minimal --target ${{ matrix.TARGET }} wasm32-unknown-unknown -y
         echo "$HOME/.cargo/bin" >> $GITHUB_PATH
 
-    - name: Install build dependencies - Cross
-      if: ${{ contains(matrix.TARGET, 'linux') }}
-      run: cargo install cross
+    - name: Install build dependencies - Cargo-Binstall
+      uses: cargo-bins/cargo-binstall@main
+
+    - name: Install build dependencies - Cross, Trunk
+      run: cargo binstall -y trunk cross
+
+    - name: Building frontend (wasm32)
+      working-directory: src/webpage
+      run: trunk build --release --locked --verbose
 
     - name: Building for ${{ matrix.os }} ${{ matrix.target }} (${{ matrix.EXTENSION }})
       if: ${{ contains(matrix.TARGET, 'linux') }}

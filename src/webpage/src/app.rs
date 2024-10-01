@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+
 use chrono::prelude::*;
 use eframe::egui::{CollapsingHeader, Context};
 use egui_plot::{Line, Plot, PlotPoints};
@@ -41,9 +42,7 @@ impl App {
         let url = format!("{}//{}/mavlink/ws", protocol, host);
 
         let (sender, receiver) = {
-            let url = Url::parse(&url)
-                .unwrap()
-                .to_string();
+            let url = Url::parse(&url).unwrap().to_string();
             connect(url, ewebsock::Options::default()).expect("Can't connect")
         };
 

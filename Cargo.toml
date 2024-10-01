@@ -3,7 +3,6 @@ name = "mavlink-server"
 version = "0.1.0"
 edition = "2021"
 authors = ["João Antônio Cardoso <joao.maker@gmail.com>", "Patrick José Pereira <patrickelectric@gmail.com>"]
-build = "src/build.rs"
 
 [lib]
 name = "mavlink_server"
@@ -20,6 +19,7 @@ path = "src/main.rs"
 bench = false
 
 [dependencies]
+mavlink-server-frontend = { path = "src/webpage" }
 anyhow = "1"
 arc-swap = "1.7"
 async-trait = "0.1.81"
@@ -59,7 +59,7 @@ criterion = "0.5"
 tokio = { version = "1", features = ["full"] }
 
 [build-dependencies]
-vergen-gix = { version = "1.0.0-beta.2", default-features = false, features = ["build", "cargo"] }
+vergen-gix = { version = "1.0.1", default-features = false, features = ["build", "cargo"] }
 
 [profile.profiling]
 inherits = "release"
