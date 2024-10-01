@@ -9,14 +9,31 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v2
-    - uses: dtolnay/rust-toolchain@stable
-    - name: Check code style
-      run: cargo fmt -- --check
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Use cached dependencies
+      uses: Swatinem/rust-cache@v2
+      with:
+        key: "${{ hashFiles('**/Cargo.lock') }}"
+        shared-key: "shared"
+
+    - name: Install build dependencies - Rustup
+      run: |
+        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- --default-toolchain stable -y
+        echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+
+    - name: Check style
+      run: cargo fmt --check
+
+    - name: Check clippy
+      run: cargo clippy --all-features --locked
+
     - name: Build
-      run: cargo build --verbose
+      run: cargo test --all-features --verbose --locked --no-run
+
     - name: Test
-      run: cargo test --verbose -- --nocapture
+      run: cargo test --all-features --verbose --locked -- --nocapture
 
   build:
     needs: test
@@ -51,23 +68,35 @@ jobs:
     - name: Building ${{ matrix.TARGET }}
       run: echo "${{ matrix.TARGET }}"
 
-    - uses: actions/checkout@master
+    - uses: actions/checkout@v4
+
+    - name: Use cached dependencies
+      uses: Swatinem/rust-cache@v2
+      with:
+        key: "${{ matrix.os }}-${{ matrix.TARGET }}-${{ hashFiles('**/Cargo.lock') }}"
+        shared-key: "shared"
 
     - name: Install build dependencies - Rustup
       run: |
         curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- --default-toolchain stable --profile minimal --target ${{ matrix.TARGET }} -y
         echo "$HOME/.cargo/bin" >> $GITHUB_PATH
 
-    - name: Build
-      uses: houseabsolute/actions-rust-cross@v0
-      with:
-        target: ${{ matrix.TARGET }}
-        args: "--locked --release"
+    - name: Install build dependencies - Cross
+      if: ${{ contains(matrix.TARGET, 'linux') }}
+      run: cargo install cross
 
-    - name: Rename
+    - name: Building for ${{ matrix.os }} ${{ matrix.target }} (${{ matrix.EXTENSION }})
+      if: ${{ contains(matrix.TARGET, 'linux') }}
+      run: cross build --release --locked --target ${{matrix.target}} --verbose
+
+    - name: Building for ${{ matrix.os }} ${{ matrix.target }} (${{ matrix.EXTENSION }})
+      if: ${{ !contains(matrix.TARGET, 'linux') }}
+      run: cargo build --release --locked --target ${{matrix.target}} --verbose
+
+    - name: Prepare files
       run: cp target/${{ matrix.TARGET }}/release/${{ github.event.repository.name }}${{ matrix.EXTENSION }} ${{ github.event.repository.name }}-${{ matrix.TARGET }}${{ matrix.EXTENSION }}
 
-    - uses: actions/upload-artifact@master
+    - uses: actions/upload-artifact@v4
       with:
         name: ${{ github.event.repository.name }}-${{ matrix.TARGET }}${{ matrix.EXTENSION }}
         path: ${{ github.event.repository.name }}-${{ matrix.TARGET }}${{ matrix.EXTENSION }}
