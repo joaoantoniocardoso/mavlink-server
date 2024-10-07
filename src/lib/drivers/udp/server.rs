@@ -84,7 +84,7 @@ impl UdpServer {
                 Ok((bytes_received, client_addr)) if bytes_received > 0 => {
                     let client_addr = &client_addr.to_string();
 
-                    read_all_messages(client_addr, &mut buf, |message| async {
+                    read_all_messages(client_addr, &mut buf, true, |message| async {
                         let message = Arc::new(message);
 
                         self.stats

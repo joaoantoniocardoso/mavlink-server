@@ -82,7 +82,9 @@ impl Serial {
             match port.lock().await.read(&mut buf).await {
                 // We got something
                 Ok(bytes_received) if bytes_received > 0 => {
-                    read_all_messages("serial", &mut buf, |message| async {
+                    trace!("Buffer: {buf:?}");
+
+                    read_all_messages("serial", &mut buf, false, |message| async {
                         let message = Arc::new(message);
 
                         for future in on_message_input.call_all(message.clone()) {
@@ -91,6 +93,8 @@ impl Serial {
                                 continue;
                             }
                         }
+
+                        trace!("Message received: {message:?}");
 
                         if let Err(error) = hub_sender.send(message) {
                             error!("Failed to send message to hub: {error:?}, from {port_name:?}");
@@ -130,7 +134,7 @@ impl Serial {
                         }
                     }
 
-                    if let Err(error) = port.lock().await.write_all(&message.raw_bytes()).await {
+                    if let Err(error) = port.lock().await.write_all(message.raw_bytes()).await {
                         error!("Failed to send serial message: {error:?}");
                         break;
                     }

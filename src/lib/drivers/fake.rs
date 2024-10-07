@@ -221,7 +221,7 @@ impl Driver for FakeSource {
             buf.clear();
             mavlink::write_v2_msg(&mut buf, header, &data).expect("Failed to write message");
 
-            read_all_messages("FakeSource", &mut buf, {
+            read_all_messages("FakeSource", &mut buf, true, {
                 let hub_sender = hub_sender.clone();
                 move |message| {
                     let message = Arc::new(message);

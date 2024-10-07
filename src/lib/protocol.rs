@@ -35,8 +35,12 @@ impl Protocol {
     }
 }
 
-pub async fn read_all_messages<F, Fut>(origin: &str, buf: &mut Vec<u8>, process_message: F)
-where
+pub async fn read_all_messages<F, Fut>(
+    origin: &str,
+    buf: &mut Vec<u8>,
+    discard_invalid_checksum: bool,
+    process_message: F,
+) where
     F: Fn(Protocol) -> Fut,
     Fut: Future<Output = ()>,
 {
@@ -44,23 +48,44 @@ where
     let mut reader: mavlink::async_peek_reader::AsyncPeekReader<Cursor<&[u8]>, 280> =
         mavlink::async_peek_reader::AsyncPeekReader::new(reader);
 
-    loop {
-        let message = match mavlink::read_v2_raw_message_async::<MavMessage, _>(&mut reader).await {
-            Ok(message) => Protocol::new(origin, message),
+    let message = loop {
+        match mavlink::read_v2_raw_message_async::<MavMessage, _>(&mut reader).await {
+            Ok(message) => {
+                break Some(message);
+            }
             Err(error) => {
                 match error {
                     mavlink::error::MessageReadError::Io(_) => (),
-                    mavlink::error::MessageReadError::Parse(_) => {
-                        error!("Failed to parse MAVLink message: {error:?}")
+                    mavlink::error::MessageReadError::Parse(ref parse_error) => {
+                        error!("Failed to parse MAVLink message: {error:?}");
+
+                        if let mavlink::error::ParserError::InvalidCRC {
+                            crc: _,
+                            calculated_crc: _,
+                            message,
+                        } = parse_error
+                        {
+                            if !discard_invalid_checksum {
+                                let mavlink::MAVLinkMessageRaw::V2(message) =
+                                    message.as_ref().to_owned()
+                                else {
+                                    continue;
+                                };
+                                break Some(message);
+                            }
+                        }
                     }
                 }
 
-                break;
+                break None;
             }
-        };
+        }
+    };
+
+    if let Some(message) = message {
+        let message = Protocol::new(origin, message);
 
         trace!("Parsed message: {:?}", message.raw_bytes());
-
         process_message(message).await;
     }
 

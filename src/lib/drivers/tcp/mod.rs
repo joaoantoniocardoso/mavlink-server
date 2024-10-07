@@ -37,7 +37,7 @@ async fn tcp_receive_task(
 
         trace!("Received TCP packet: {buf:?}");
 
-        read_all_messages(remote_addr, &mut buf, |message| async {
+        read_all_messages(remote_addr, &mut buf, true, |message| async {
             let message = Arc::new(message);
 
             stats.write().await.stats.update_input(&message);
