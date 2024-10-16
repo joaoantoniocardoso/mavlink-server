@@ -78,7 +78,8 @@ pub async fn mavlink(path: Option<Path<String>>) -> impl IntoResponse {
         Some(path) => path.0.to_string(),
         None => String::default(),
     };
-    crate::drivers::rest::data::messages(&path)
+    // crate::drivers::rest::data::messages(&path)
+    todo!()
 }
 
 pub async fn driver_stats() -> impl IntoResponse {
