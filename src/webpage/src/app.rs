@@ -33,6 +33,7 @@ enum Tab {
     HubStats,
     MessagesStats,
     DriversStats,
+    Logs,
 }
 
 pub struct App {
@@ -77,7 +78,7 @@ impl Default for App {
         let (drivers_stats_sender, drivers_stats_receiver) =
             connect_websocket(DRIVERS_STATS_WEBSOCKET_PATH).unwrap();
 
-        let mut dock_state = DockState::new(vec![Tab::MessagesInspector]);
+        let mut dock_state = DockState::new(vec![Tab::MessagesInspector, Tab::Logs]);
 
         let [left, right] =
             dock_state
@@ -682,6 +683,15 @@ impl App {
                 }
             });
     }
+
+    fn create_logs_ui(&self, ui: &mut egui::Ui) {
+        eframe::egui::ScrollArea::vertical()
+            .id_salt("scrolldrivers_stats")
+            .show(ui, |ui| {
+                let text = "potato".to_string();
+                ui.monospace(text)
+            });
+    }
 }
 
 fn get_protocol() -> (String, String) {
@@ -809,6 +819,7 @@ impl<'a> TabViewer for OurTabViewer<'a> {
             Tab::HubStats => "Hub Stats".into(),
             Tab::MessagesStats => "Messages Stats".into(),
             Tab::DriversStats => "Drivers Stats".into(),
+            Tab::Logs => "Logs".into(),
         }
     }
 
@@ -851,6 +862,9 @@ impl<'a> TabViewer for OurTabViewer<'a> {
             }
             Tab::DriversStats => {
                 self.app.create_drivers_stats_ui(ui);
+            }
+            Tab::Logs => {
+                self.app.create_logs_ui(ui);
             }
         }
     }
