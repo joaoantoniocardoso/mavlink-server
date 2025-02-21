@@ -86,37 +86,37 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
 
-    if !is_wasm_target_installed() {
-        install_wasm_target();
-    }
+    // if !is_wasm_target_installed() {
+    //     install_wasm_target();
+    // }
 
-    if get_trunk_version().is_none() {
-        info!("trunk not found");
-        install_trunk().unwrap_or_else(|e| {
-            eprintln!("Error: {}", e);
-            exit(1);
-        });
-    }
+    // if get_trunk_version().is_none() {
+    //     info!("trunk not found");
+    //     install_trunk().unwrap_or_else(|e| {
+    //         eprintln!("Error: {}", e);
+    //         exit(1);
+    //     });
+    // }
 
-    info!("Building frontend...");
-    let mut trunk_command = Command::new("trunk");
-    trunk_command.args(["build", "./src/webpage/index.html"]);
+    // info!("Building frontend...");
+    // let mut trunk_command = Command::new("trunk");
+    // trunk_command.args(["build", "./src/webpage/index.html"]);
 
-    // Add --release argument if not in debug mode
-    if cfg!(not(debug_assertions)) {
-        trunk_command.args(["--release", "--locked"]);
-    }
+    // // Add --release argument if not in debug mode
+    // if cfg!(not(debug_assertions)) {
+    //     trunk_command.args(["--release", "--locked"]);
+    // }
 
-    let trunk_output = trunk_command.output().expect("Failed to execute trunk");
+    // let trunk_output = trunk_command.output().expect("Failed to execute trunk");
 
-    if !trunk_output.status.success() {
-        eprintln!(
-            "Trunk build failed: {}",
-            String::from_utf8_lossy(&trunk_output.stderr)
-        );
-        exit(1);
-    }
-    info!("{}", String::from_utf8_lossy(&trunk_output.stdout));
+    // if !trunk_output.status.success() {
+    //     eprintln!(
+    //         "Trunk build failed: {}",
+    //         String::from_utf8_lossy(&trunk_output.stderr)
+    //     );
+    //     exit(1);
+    // }
+    // info!("{}", String::from_utf8_lossy(&trunk_output.stdout));
 
     Ok(())
 }

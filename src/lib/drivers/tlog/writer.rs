@@ -111,7 +111,7 @@ impl TlogWriter {
 impl Driver for TlogWriter {
     #[instrument(level = "debug", skip(self, hub_sender))]
     async fn run(&self, hub_sender: broadcast::Sender<Arc<Protocol>>) -> Result<()> {
-        let file = tokio::fs::File::create(self.path.clone()).await?;
+        let file = create_tlog_file(self.path.clone()).await?;
         let writer = tokio::io::BufWriter::with_capacity(1024, file);
         let hub_receiver = hub_sender.subscribe();
 
@@ -157,7 +157,9 @@ impl DriverInfo for TlogWriterInfo {
         let first_schema = &self.valid_schemes()[0];
         vec![
             format!("{first_schema}:<FILE>"),
+            format!("{first_schema}:<TLOGS_OUTPUT_DIR>"),
             format!("{first_schema}:/tmp/potato.tlog"),
+            format!("{first_schema}:/tmp/tlogs_output_dir/"),
         ]
     }
 
@@ -165,7 +167,11 @@ impl DriverInfo for TlogWriterInfo {
         let first_schema = &self.valid_schemes()[0];
         vec![
             format!("{first_schema}://<FILE>").to_string(),
+            format!("{first_schema}://<TLOGS_OUTPUT_DIR>").to_string(),
             url::Url::parse(&format!("{first_schema}:///tmp/potato.tlog"))
+                .unwrap()
+                .to_string(),
+            url::Url::parse(&format!("{first_schema}:///tmp/tlogs_output_dir/"))
                 .unwrap()
                 .to_string(),
         ]
@@ -176,4 +182,50 @@ impl DriverInfo for TlogWriterInfo {
             TlogWriter::builder("TlogWriter", url.path().into()).build(),
         ))
     }
+}
+
+async fn create_tlog_file(path: PathBuf) -> Result<tokio::fs::File> {
+    let file_path: PathBuf = if path.extension().and_then(|ext| ext.to_str()) == Some("tlog") {
+        path.clone()
+    } else {
+        if !std::path::Path::new(&path).exists() {
+            tokio::fs::create_dir_all(&path).await?;
+        }
+
+        let sequence = get_sequence(&path).await.unwrap_or_default();
+        let timestamp = chrono::Local::now().format("%Y-%m-%d_%H-%M-%S");
+        let file_name = format!("{sequence}-{timestamp}.tlog");
+
+        let mut file_path = path.clone();
+        file_path.push(file_name);
+        file_path
+    };
+
+    tokio::fs::File::create(file_path)
+        .await
+        .map_err(anyhow::Error::msg)
+}
+
+async fn get_sequence(path: &PathBuf) -> Result<u32> {
+    let re = regex::Regex::new(r"^(\d{5})-\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}\.tlog$")
+        .expect("Failed to compile regex");
+
+    let mut max_seq: u32 = 0;
+    let mut files_in_dir = tokio::fs::read_dir(&path).await?;
+
+    while let Some(entry) = files_in_dir.next_entry().await? {
+        let entry_path = entry.path();
+
+        if let Some(sequence) = entry_path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .and_then(|file_name| re.captures(file_name))
+            .and_then(|captures| captures.get(1))
+            .and_then(|seq_match| seq_match.as_str().parse::<u32>().ok())
+        {
+            max_seq = max_seq.max(sequence);
+        }
+    }
+
+    Ok(max_seq + 1)
 }
