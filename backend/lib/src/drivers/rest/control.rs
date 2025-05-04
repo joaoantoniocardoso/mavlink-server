@@ -241,7 +241,7 @@ impl Vehicle {
                 let patch = ((autopilot_version.flight_sw_version >> 8) & 0xff) as u64;
                 let version = Some(Version {
                     capabilities: Capabilities::from_bits_truncate(
-                        autopilot_version.capabilities.bits() as u64,
+                        autopilot_version.capabilities.bits(),
                     ),
                     version: semver::Version::new(major, minor, patch),
                 });
