@@ -96,10 +96,10 @@ pub struct VehicleComponent {
 impl Clone for VehicleComponent {
     fn clone(&self) -> Self {
         Self {
-            component_id: self.component_id.clone(),
-            armed: self.armed.clone(),
-            autopilot: self.autopilot.clone(),
-            vehicle_type: self.vehicle_type.clone(),
+            component_id: self.component_id,
+            armed: self.armed,
+            autopilot: self.autopilot,
+            vehicle_type: self.vehicle_type,
             mode: self.mode.clone(),
             attitude: self.attitude.clone(),
             position: self.position.clone(),
