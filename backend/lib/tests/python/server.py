@@ -9,7 +9,7 @@ async def run_server() -> Optional[asyncio.Task]:
     """Run the Rust server binary with specified arguments."""
     try:
         process = await asyncio.create_subprocess_exec(
-            "cargo", "run", "--",
+            "cargo", "run", "--bin=mavlink-server", "--",
             "tcpclient:0.0.0.0:5760",
             "udpout:0.0.0.0:14660",
             "--verbose",
