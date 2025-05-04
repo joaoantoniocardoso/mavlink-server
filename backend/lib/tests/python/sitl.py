@@ -3,7 +3,6 @@
 import asyncio
 import aiohttp
 import stat
-import sys
 import tempfile
 from pathlib import Path
 from typing import Optional

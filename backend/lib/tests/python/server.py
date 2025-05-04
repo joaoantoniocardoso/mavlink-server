@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 
 import asyncio
-import sys
 from typing import Optional
 from utils import handle_output
 

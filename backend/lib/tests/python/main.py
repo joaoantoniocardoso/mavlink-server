@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 
 import asyncio
-import aiohttp
 import platform
 import sys
 from sitl import run_sitl
