@@ -48,7 +48,7 @@ async fn info() -> Json<Info> {
 
 #[instrument(level = "trace")]
 async fn info_full() -> impl IntoResponse {
-    let toml = std::str::from_utf8(include_bytes!("../../../../../Cargo.toml")).unwrap();
+    let toml = std::str::from_utf8(include_bytes!("../../../../../../Cargo.toml")).unwrap();
     let content: serde_json::Value = toml::from_str(toml).unwrap();
     serde_json::to_string(&content).unwrap()
 }

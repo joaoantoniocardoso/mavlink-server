@@ -1,4 +1,7 @@
-/target
-/logs
+**/target
+**/dist
+**/node_modules
+**/tests/files/untracked
 .vscode
-/tests/files/untracked
+dev
+logs

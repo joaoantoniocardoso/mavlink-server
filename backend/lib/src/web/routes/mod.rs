@@ -14,7 +14,7 @@ use tracing::*;
 
 use crate::cli;
 
-static HTML_DIST: Dir = include_dir!("$CARGO_MANIFEST_DIR/src/webpage/dist");
+static HTML_DIST: Dir = include_dir!("$CARGO_MANIFEST_DIR/../../frontend/dist");
 
 #[instrument(level = "trace")]
 pub fn router() -> Router {

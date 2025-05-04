@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 static ASSETS_DIR: Dir = include_dir!(
-    "$CARGO_MANIFEST_DIR/src/lib/drivers/rest/autopilot/parameters/ardupilot_parameters",
+    "$CARGO_MANIFEST_DIR/src/drivers/rest/autopilot/parameters/ardupilot_parameters",
     "**/*.json"
 );
 
