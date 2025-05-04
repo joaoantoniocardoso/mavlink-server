@@ -9,7 +9,7 @@ use egui::mutex::Mutex;
 use egui_dock::{DockArea, DockState, NodeIndex, Style, TabViewer};
 use egui_extras::TableBody;
 use egui_plot::{Line, Plot, PlotPoints};
-use ewebsock::{connect, WsEvent, WsMessage, WsReceiver, WsSender};
+use ewebsock::{WsEvent, WsMessage, WsReceiver, WsSender, connect};
 use humantime::format_duration;
 use ringbuffer::{ConstGenericRingBuffer, RingBuffer};
 use url::Url;
@@ -18,11 +18,11 @@ use web_sys::window;
 use crate::{
     messages::{FieldInfo, FieldValue, MessageInfo, VehiclesMessages},
     stats::{
+        ByteStatsHistorical, DelayStatsHistorical, MessageStatsHistorical, StatsInner,
         drivers_stats::{DriversStatsHistorical, DriversStatsSample},
         hub_messages_stats::{HubMessagesStatsHistorical, HubMessagesStatsSample},
         hub_stats::{HubStatsHistorical, HubStatsSample},
         resources::{ResourceUsage, ResourceUsageHistorical},
-        ByteStatsHistorical, DelayStatsHistorical, MessageStatsHistorical, StatsInner,
     },
     tabs::{control::ControlTab, helper::HelperTab},
     widgets::driver_stats::DriverStatsWidget,
@@ -258,7 +258,9 @@ impl App {
                         if label.hovered() || label2.hovered() {
                             show_stats_tooltip(
                                 ui,
-                                &FieldValue::Numeric(self.resources_stats.memory_usage_mbytes.to_f64()),
+                                &FieldValue::Numeric(
+                                    self.resources_stats.memory_usage_mbytes.to_f64(),
+                                ),
                                 "Memory",
                             );
                         };
@@ -511,16 +513,17 @@ impl App {
     }
 
     fn deal_with_hub_messages_stats_message(&mut self, message: String) {
-        let hub_messages_stats_sample =
-            match serde_json::from_str::<HubMessagesStatsSample>(&message) {
-                Ok(stats) => stats,
-                Err(error) => {
-                    log::error!(
+        let hub_messages_stats_sample = match serde_json::from_str::<HubMessagesStatsSample>(
+            &message,
+        ) {
+            Ok(stats) => stats,
+            Err(error) => {
+                log::error!(
                     "Failed to parse Hub Messages Stats message: {error:?}. Message: {message:#?}"
                 );
-                    return;
-                }
-            };
+                return;
+            }
+        };
 
         self.hub_messages_stats.update(hub_messages_stats_sample)
     }

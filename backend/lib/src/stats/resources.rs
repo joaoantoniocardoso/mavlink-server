@@ -3,7 +3,7 @@ use std::sync::Mutex;
 use anyhow::Result;
 use lazy_static::lazy_static;
 use serde::Serialize;
-use sysinfo::{get_current_pid, ProcessExt, System, SystemExt};
+use sysinfo::{ProcessExt, System, SystemExt, get_current_pid};
 
 lazy_static! {
     static ref SYSTEM: Mutex<System> = Mutex::new(System::new_all());
