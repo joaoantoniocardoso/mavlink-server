@@ -32,3 +32,9 @@
 ## Installation
 
 Download the binaries available on the [latest release](https://github.com/bluerobotics/mavlink-server/releases/latest).
+
+## Build
+
+```bash
+./build.sh
+```
