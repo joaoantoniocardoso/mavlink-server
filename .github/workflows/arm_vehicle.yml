@@ -37,14 +37,14 @@ jobs:
         pip install aiohttp mavsdk
 
     - name: Building frontend (wasm32)
-      working-directory: src/webpage
+      working-directory: frontend
       run: trunk build --release --locked --verbose
 
     - name: Build mavlink-server
       run: |
-        cargo build
+        cargo build --release --locked --verbose
 
     - name: Run vehicle arming test
+      working-directory: backend/lib/tests/python
       run: |
-        cd tests/python
         python main.py

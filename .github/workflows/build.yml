@@ -28,22 +28,22 @@ jobs:
       run: cargo binstall -y trunk
 
     - name: Building frontend (wasm32)
-      working-directory: src/webpage
+      working-directory: frontend
       run: trunk build --release --locked --verbose
 
     - name: Building tests
-      run: SKIP_FRONTEND=1 cargo test --no-run --locked --verbose
+      run: cargo test --no-run --all-features --all-targets --workspace --locked --verbose
 
     - name: Run Tests
       run: |
-        SKIP_FRONTEND=1 cargo test --verbose -- --nocapture
-        SKIP_FRONTEND=1 cargo test test_udpserver_receive_only --verbose -- --nocapture
-        SKIP_FRONTEND=1 cargo test test_udpserver_send_only --verbose -- --nocapture --ignored
-        SKIP_FRONTEND=1 cargo test test_udpclient_send_only --verbose -- --nocapture --ignored
-        SKIP_FRONTEND=1 cargo test test_tcpserver_receive_only --verbose -- --nocapture --ignored
-        SKIP_FRONTEND=1 cargo test test_tcpserver_send_only --verbose -- --nocapture --ignored
-        SKIP_FRONTEND=1 cargo test test_tcpclient_send_only --verbose -- --nocapture --ignored
-        SKIP_FRONTEND=1 cargo test test_tcpclient_receive_only --verbose -- --nocapture --ignored
+        cargo test --all-features --all-targets --workspace --locked --verbose -- --nocapture
+        cargo test test_udpserver_receive_only --locked --verbose -- --nocapture
+        cargo test test_udpserver_send_only --locked --verbose -- --nocapture --ignored
+        cargo test test_udpclient_send_only --locked --verbose -- --nocapture --ignored
+        cargo test test_tcpserver_receive_only --locked --verbose -- --nocapture --ignored
+        cargo test test_tcpserver_send_only --locked --verbose -- --nocapture --ignored
+        cargo test test_tcpclient_send_only --locked --verbose -- --nocapture --ignored
+        cargo test test_tcpclient_receive_only --locked --verbose -- --nocapture --ignored
 
   build:
     runs-on: ${{ matrix.os }}
@@ -100,15 +100,10 @@ jobs:
       run: cargo binstall -y trunk cross
 
     - name: Building frontend (wasm32)
-      working-directory: src/webpage
+      working-directory: frontend
       run: trunk build --release --locked --verbose
 
-    - name: Building linux for ${{ matrix.os }} ${{ matrix.target }}
-      if: ${{ contains(matrix.TARGET, 'linux') }}
-      run: SKIP_FRONTEND=1 cross build --release --locked --target ${{matrix.target}} --verbose
-
-    - name: Building non linux for ${{ matrix.os }} ${{ matrix.target }}
-      if: ${{ !contains(matrix.TARGET, 'linux') }}
+    - name: Building for ${{ matrix.os }} ${{ matrix.target }}
       run: cross build --release --locked --target ${{matrix.target}} --verbose
 
     - name: Rename
