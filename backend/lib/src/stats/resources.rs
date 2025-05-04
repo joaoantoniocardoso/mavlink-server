@@ -26,10 +26,10 @@ pub fn usage() -> Result<ResourceUsage> {
     let pid = get_current_pid().expect("Failed getting current process' PID");
     let process = sys.process(pid).expect("Failed getting proccess from PID");
 
-    return Ok(ResourceUsage {
+    Ok(ResourceUsage {
         run_time: process.run_time(),
         cpu_usage: process.cpu_usage() / sys.cpus().len() as f32,
         memory_usage_bytes: process.memory(),
         total_memory_bytes: sys.total_memory(),
-    });
+    })
 }
