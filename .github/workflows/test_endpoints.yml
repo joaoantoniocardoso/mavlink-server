@@ -47,5 +47,6 @@ jobs:
           sleep 5
 
       - name: Run Python Heartbeat Test
+        working-directory: backend/lib
         run: |
           python tests/scripts/test_heartbeat.py ${{ matrix.endpoint_pair.client }}
