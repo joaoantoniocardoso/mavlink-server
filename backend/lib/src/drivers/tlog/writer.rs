@@ -285,7 +285,6 @@ impl DriverInfo for TlogWriterInfo {
             .get("when")
             .and_then(|v| {
                 v.parse()
-                    .map(FileCreationCondition::from)
                     .map(|cond| match cond {
                         FileCreationCondition::WhileArmed(_) => {
                             FileCreationCondition::WhileArmed(ExpectedOrigin {
