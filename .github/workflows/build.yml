@@ -34,6 +34,7 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@v1
         with:
+          toolchain: stable
           targets: wasm32-unknown-unknown
 
       - uses: Swatinem/rust-cache@v2.9.1
@@ -47,6 +48,8 @@ jobs:
 
       - name: Install build dependencies - Cargo-Binstall
         uses: cargo-bins/cargo-binstall@v1.20.0
+        with:
+          version: "1.20.0"
 
       - name: Install build dependencies - Trunk
         run: |
@@ -100,6 +103,8 @@ jobs:
           path: src/webpage/dist
 
       - uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
 
       - uses: Swatinem/rust-cache@v2.9.1
         with:
@@ -118,6 +123,8 @@ jobs:
 
       - name: Install build dependencies - Cargo-Binstall
         uses: cargo-bins/cargo-binstall@v1.20.0
+        with:
+          version: "1.20.0"
 
       - name: Install build dependencies - cargo-nextest
         run: |
@@ -164,6 +171,7 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@v1
         with:
+          toolchain: stable
           targets: x86_64-unknown-linux-musl
 
       - uses: Swatinem/rust-cache@v2.9.1
@@ -177,6 +185,8 @@ jobs:
 
       - name: Install build dependencies - Cargo-Binstall
         uses: cargo-bins/cargo-binstall@v1.20.0
+        with:
+          version: "1.20.0"
 
       - name: Install build dependencies - Cross
         run: |
@@ -282,6 +292,7 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@v1
         with:
+          toolchain: stable
           targets: ${{ matrix.TARGET }}
 
       - uses: Swatinem/rust-cache@v2.9.1
@@ -297,6 +308,8 @@ jobs:
       - name: Install build dependencies - Cargo-Binstall
         if: ${{ contains(matrix.TARGET, 'linux') }}
         uses: cargo-bins/cargo-binstall@v1.20.0
+        with:
+          version: "1.20.0"
 
       - name: Install build dependencies - Cross
         if: ${{ contains(matrix.TARGET, 'linux') }}
