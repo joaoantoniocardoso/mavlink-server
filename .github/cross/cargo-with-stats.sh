@@ -12,6 +12,9 @@ fi
 
 if [ "$1" = "build" ]; then
   "$real_cargo" "$@"
+  echo ">>> SCCACHE_HUMAN_STATS_START >>>"
+  /usr/bin/sccache --show-stats
+  echo ">>> SCCACHE_HUMAN_STATS_END >>>"
   /usr/bin/sccache --show-stats --stats-format=json
 else
   "$real_cargo" "$@"
