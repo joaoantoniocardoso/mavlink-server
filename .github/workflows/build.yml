@@ -190,7 +190,7 @@ jobs:
           cross build --release --locked --target x86_64-unknown-linux-musl --verbose 2>&1 | tee sccache-build.log
 
       - name: Report sccache stats
-        run: bash .github/cross/report-sccache-stats.sh sccache-build.log
+        run: bash .github/cross/report-sccache-stats.sh sccache-build.log x86_64-unknown-linux-musl
 
       - name: Stage binary
         shell: bash
@@ -313,7 +313,7 @@ jobs:
 
       - name: Report sccache stats
         if: ${{ contains(matrix.TARGET, 'linux') }}
-        run: bash .github/cross/report-sccache-stats.sh sccache-build.log
+        run: bash .github/cross/report-sccache-stats.sh sccache-build.log ${{ matrix.TARGET }}
 
       - name: Building non linux for ${{ matrix.TARGET }}
         if: ${{ !contains(matrix.TARGET, 'linux') }}
