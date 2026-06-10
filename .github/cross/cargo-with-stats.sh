@@ -12,10 +12,9 @@ fi
 
 if [ "$1" = "build" ]; then
   "$real_cargo" "$@"
-  echo ">>> SCCACHE_HUMAN_STATS_START >>>"
-  /usr/bin/sccache --show-stats
-  echo ">>> SCCACHE_HUMAN_STATS_END >>>"
-  /usr/bin/sccache --show-stats --stats-format=json
+  /usr/bin/sccache --show-stats 2>/dev/null \
+    | grep -E '^(Cache hits rate|Compilations) ' \
+    || true
 else
   "$real_cargo" "$@"
 fi
