@@ -26,7 +26,7 @@ pub struct MAVLinkVehiclesData {
 }
 
 impl MAVLinkVehiclesData {
-    fn update(&mut self, message: MAVLinkJSON<mavlink::ardupilotmega::MavMessage>) {
+    fn update(&mut self, message: MAVLinkJSON<mavlink::dialects::ardupilotmega::MavMessage>) {
         let vehicle_id = message.header.inner.system_id;
         self.vehicles
             .entry(vehicle_id)
@@ -62,7 +62,7 @@ struct MAVLinkVehicleData {
 }
 
 impl MAVLinkVehicleData {
-    fn update(&mut self, message: MAVLinkJSON<mavlink::ardupilotmega::MavMessage>) {
+    fn update(&mut self, message: MAVLinkJSON<mavlink::dialects::ardupilotmega::MavMessage>) {
         let component_id = message.header.inner.component_id;
         self.components
             .entry(component_id)
@@ -81,7 +81,7 @@ struct MAVLinkVehicleComponentData {
 }
 
 impl MAVLinkVehicleComponentData {
-    fn update(&mut self, message: MAVLinkJSON<mavlink::ardupilotmega::MavMessage>) {
+    fn update(&mut self, message: MAVLinkJSON<mavlink::dialects::ardupilotmega::MavMessage>) {
         let message_name = message.message.message_name().to_string();
         self.messages
             .entry(message_name)
@@ -95,12 +95,12 @@ impl MAVLinkVehicleComponentData {
 
 #[derive(Debug, Deserialize, Serialize)]
 struct MAVLinkMessageStatus {
-    message: mavlink::ardupilotmega::MavMessage,
+    message: mavlink::dialects::ardupilotmega::MavMessage,
     status: Status,
 }
 
 impl MAVLinkMessageStatus {
-    fn update(&mut self, message: MAVLinkJSON<mavlink::ardupilotmega::MavMessage>) {
+    fn update(&mut self, message: MAVLinkJSON<mavlink::dialects::ardupilotmega::MavMessage>) {
         self.message = message.message;
         self.status.update();
     }
@@ -147,7 +147,12 @@ impl Temporal {
     }
 }
 
-pub fn update((header, message): (MAVLinkJSONHeader, mavlink::ardupilotmega::MavMessage)) {
+pub fn update(
+    (header, message): (
+        MAVLinkJSONHeader,
+        mavlink::dialects::ardupilotmega::MavMessage,
+    ),
+) {
     DATA.messages
         .lock()
         .unwrap()

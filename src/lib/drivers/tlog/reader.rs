@@ -2,7 +2,7 @@ use std::{path::PathBuf, sync::Arc};
 
 use anyhow::{Context, Result};
 use chrono::DateTime;
-use mavlink::ardupilotmega::MavMessage;
+use mavlink::dialects::ardupilotmega::MavMessage;
 use mavlink_codec::Packet;
 use tokio::sync::broadcast;
 use tracing::*;

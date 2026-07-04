@@ -166,15 +166,16 @@ impl HubActor {
         component_id: Arc<RwLock<u8>>,
         frequency: Arc<RwLock<f32>>,
     ) -> Result<()> {
-        let message =
-            mavlink::ardupilotmega::MavMessage::HEARTBEAT(mavlink::ardupilotmega::HEARTBEAT_DATA {
+        let message = mavlink::dialects::ardupilotmega::MavMessage::HEARTBEAT(
+            mavlink::dialects::ardupilotmega::HEARTBEAT_DATA {
                 custom_mode: 0,
-                mavtype: mavlink::ardupilotmega::MavType::MAV_TYPE_ONBOARD_CONTROLLER, // or MAV_TYPE_ONBOARD_GENERIC
-                autopilot: mavlink::ardupilotmega::MavAutopilot::MAV_AUTOPILOT_INVALID, // or MAV_AUTOPILOT_GENERIC?
-                base_mode: mavlink::ardupilotmega::MavModeFlag::empty(),
-                system_status: mavlink::ardupilotmega::MavState::MAV_STATE_STANDBY,
+                mavtype: mavlink::dialects::ardupilotmega::MavType::MAV_TYPE_ONBOARD_CONTROLLER, // or MAV_TYPE_ONBOARD_GENERIC
+                autopilot: mavlink::dialects::ardupilotmega::MavAutopilot::MAV_AUTOPILOT_INVALID, // or MAV_AUTOPILOT_GENERIC?
+                base_mode: mavlink::dialects::ardupilotmega::MavModeFlag::empty(),
+                system_status: mavlink::dialects::ardupilotmega::MavState::MAV_STATE_STANDBY,
                 mavlink_version: 0x3,
-            });
+            },
+        );
 
         let burst_size = 5;
         let mut burst_msgs_counter = 0;

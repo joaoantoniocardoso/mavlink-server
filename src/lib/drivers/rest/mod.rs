@@ -80,7 +80,7 @@ impl Rest {
 
         while let Ok(message) = ws_receiver.recv().await {
             let Ok(content) =
-                json5::from_str::<MAVLinkJSON<mavlink::ardupilotmega::MavMessage>>(&message)
+                json5::from_str::<MAVLinkJSON<mavlink::dialects::ardupilotmega::MavMessage>>(&message)
             else {
                 warn!("Failed to parse message, not a valid MAVLinkMessage: {message:?}");
                 continue;
@@ -121,11 +121,11 @@ impl Rest {
     #[instrument(level = "debug", skip_all)]
     async fn control_send_task(
         context: &SendReceiveContext,
-        control_receiver: &mut broadcast::Receiver<mavlink::ardupilotmega::MavMessage>,
+        control_receiver: &mut broadcast::Receiver<mavlink::dialects::ardupilotmega::MavMessage>,
     ) -> Result<()> {
         let header = mavlink::MavHeader {
             system_id: 255, // default system_id for gcs
-            component_id: mavlink::ardupilotmega::MavComponent::MAV_COMP_ID_MISSIONPLANNER as u8,
+            component_id: mavlink::dialects::ardupilotmega::MavComponent::MAV_COMP_ID_MISSIONPLANNER as u8,
             ..Default::default()
         };
 
@@ -200,7 +200,7 @@ impl Rest {
             }
 
             let Ok(mavlink_json) = message
-                .to_mavlink_json::<mavlink::ardupilotmega::MavMessage>()
+                .to_mavlink_json::<mavlink::dialects::ardupilotmega::MavMessage>()
                 .await
                 .inspect_err(|error| debug!("Failed converting message to json: {error:?}"))
             else {

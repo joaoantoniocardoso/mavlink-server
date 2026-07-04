@@ -56,13 +56,15 @@ pub(super) async fn recv_ftp(
                 }
 
                 let Ok((_header, msg)) = protocol
-                    .to_mavlink::<mavlink::ardupilotmega::MavMessage>()
+                    .to_mavlink::<mavlink::dialects::ardupilotmega::MavMessage>()
                     .await
                 else {
                     continue;
                 };
 
-                if let mavlink::ardupilotmega::MavMessage::FILE_TRANSFER_PROTOCOL(ftp) = msg {
+                if let mavlink::dialects::ardupilotmega::MavMessage::FILE_TRANSFER_PROTOCOL(ftp) =
+                    msg
+                {
                     let resp = FtpPayload::decode(&ftp.payload)?;
                     if let Some(seq) = expected_seq
                         && (resp.seq_number != seq + 1
@@ -93,9 +95,9 @@ fn build_ftp_message(
     target_system: u8,
     target_component: u8,
     payload: &FtpPayload,
-) -> mavlink::ardupilotmega::MavMessage {
-    mavlink::ardupilotmega::MavMessage::FILE_TRANSFER_PROTOCOL(
-        mavlink::ardupilotmega::FILE_TRANSFER_PROTOCOL_DATA {
+) -> mavlink::dialects::ardupilotmega::MavMessage {
+    mavlink::dialects::ardupilotmega::MavMessage::FILE_TRANSFER_PROTOCOL(
+        mavlink::dialects::ardupilotmega::FILE_TRANSFER_PROTOCOL_DATA {
             target_network: 0,
             target_system,
             target_component,

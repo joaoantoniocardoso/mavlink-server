@@ -273,7 +273,9 @@ impl DriverInfo for TlogWriterInfo {
         let expected_component_id = params
             .get("component_id")
             .and_then(|v| v.parse::<u8>().ok())
-            .unwrap_or(mavlink::ardupilotmega::MavComponent::MAV_COMP_ID_AUTOPILOT1 as u8);
+            .unwrap_or(
+                mavlink::dialects::ardupilotmega::MavComponent::MAV_COMP_ID_AUTOPILOT1 as u8,
+            );
 
         let file_creation_condition = params
             .get("when")
@@ -398,7 +400,7 @@ enum ArmState {
 fn check_arm_state(message: &Arc<Protocol>) -> Option<ArmState> {
     use mavlink::MessageData;
 
-    if message.message_id() != mavlink::ardupilotmega::HEARTBEAT_DATA::ID {
+    if message.message_id() != mavlink::dialects::ardupilotmega::HEARTBEAT_DATA::ID {
         return None;
     }
 
@@ -408,9 +410,11 @@ fn check_arm_state(message: &Arc<Protocol>) -> Option<ArmState> {
         .payload()
         .get(BASE_MODE_BYTE)
         .cloned()
-        .unwrap_or_else(|| mavlink::ardupilotmega::MavModeFlag::empty().bits());
+        .unwrap_or_else(|| mavlink::dialects::ardupilotmega::MavModeFlag::empty().bits());
 
-    match base_mode & mavlink::ardupilotmega::MavModeFlag::MAV_MODE_FLAG_SAFETY_ARMED.bits() {
+    match base_mode
+        & mavlink::dialects::ardupilotmega::MavModeFlag::MAV_MODE_FLAG_SAFETY_ARMED.bits()
+    {
         0 => Some(ArmState::Disarmed),
         _ => Some(ArmState::Armed),
     }

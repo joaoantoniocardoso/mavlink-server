@@ -28,7 +28,7 @@ anyhow = "1"
 arc-swap = "1.7"
 async-trait = "0.1"
 axum = { version = "0.8.4", features = ["ws"] }
-bytes = { version = "1.10", features = ["serde"] }
+bytes = { version = "1.12", features = ["serde"] }
 byteorder = "1.5.0"
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4.5", features = ["derive"] }
@@ -37,8 +37,8 @@ include_dir = { git = "https://github.com/patrickelectric/include_dir", branch =
 indexmap = { version = "2.5.0", features = ["serde"] }
 json5 = "0.4.1"
 lazy_static = "1.5.0"
-mavlink = { version = "0.16.1", features = ["std", "ardupilotmega", "emit-extensions", "format-generated-code", "serde", "tokio-1"] }
-mavlink-codec = { git = "https://github.com/bluerobotics/rust-mavlink-codec", hash = "04cb141" }
+mavlink = { version = "0.18.0", features = ["std", "dialect-ardupilotmega", "mav2-message-extensions", "format-generated-code", "serde", "tokio"] }
+mavlink-codec = { git = "https://github.com/joaoantoniocardoso/rust-mavlink-codec", branch = "wip2", features = ["json"] }
 regex = { version = "1.10.6", features = ["std", "unicode-perl"] }
 serde = { version = "1", features = ["rc"] }
 serde_derive = "1"

@@ -15,7 +15,7 @@ pub enum FirmwareType {
 
 pub fn flight_mode(
     vehicle_type: VehicleType,
-    base_mode: mavlink::ardupilotmega::MavModeFlag,
+    base_mode: mavlink::dialects::ardupilotmega::MavModeFlag,
     custom_mode: u32,
 ) -> String {
     if base_mode.bits() == 0 {

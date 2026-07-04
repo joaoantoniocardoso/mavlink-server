@@ -22,13 +22,15 @@ lazy_static! {
 }
 
 lazy_static! {
-    static ref BROADCAST: broadcast::Sender<mavlink::ardupilotmega::MavMessage> =
+    static ref BROADCAST: broadcast::Sender<mavlink::dialects::ardupilotmega::MavMessage> =
         broadcast::channel(16).0;
 }
 
 lazy_static! {
-    static ref BROADCAST_INNER: broadcast::Sender<(mavlink::MavHeader, mavlink::ardupilotmega::MavMessage)> =
-        broadcast::channel(16).0;
+    static ref BROADCAST_INNER: broadcast::Sender<(
+        mavlink::MavHeader,
+        mavlink::dialects::ardupilotmega::MavMessage
+    )> = broadcast::channel(16).0;
 }
 
 lazy_static! {
@@ -64,7 +66,7 @@ impl Default for Vehicle {
             // Every vehicle should have an autopilot component
             // https://mavlink.io/en/messages/common.html#MAV_COMP_ID_AUTOPILOT1
             components: HashMap::from([(
-                mavlink::ardupilotmega::MavComponent::MAV_COMP_ID_AUTOPILOT1 as u8,
+                mavlink::dialects::ardupilotmega::MavComponent::MAV_COMP_ID_AUTOPILOT1 as u8,
                 VehicleComponents::Autopilot(VehicleComponent::default()),
             )]),
         }
@@ -176,13 +178,14 @@ impl Vehicle {
     pub async fn update(
         &mut self,
         header: mavlink::MavHeader,
-        message: mavlink::ardupilotmega::MavMessage,
+        message: mavlink::dialects::ardupilotmega::MavMessage,
     ) {
         if header.system_id != self.vehicle_id {
             return;
         }
 
-        if header.component_id != mavlink::ardupilotmega::MavComponent::MAV_COMP_ID_AUTOPILOT1 as u8
+        if header.component_id
+            != mavlink::dialects::ardupilotmega::MavComponent::MAV_COMP_ID_AUTOPILOT1 as u8
         {
             return;
         }
@@ -196,10 +199,10 @@ impl Vehicle {
         let mut vehicle_updated = true;
 
         match message {
-            mavlink::ardupilotmega::MavMessage::HEARTBEAT(heartbeat) => {
+            mavlink::dialects::ardupilotmega::MavMessage::HEARTBEAT(heartbeat) => {
                 component.armed = heartbeat.base_mode
-                    & mavlink::ardupilotmega::MavModeFlag::MAV_MODE_FLAG_SAFETY_ARMED
-                    == mavlink::ardupilotmega::MavModeFlag::MAV_MODE_FLAG_SAFETY_ARMED;
+                    & mavlink::dialects::ardupilotmega::MavModeFlag::MAV_MODE_FLAG_SAFETY_ARMED
+                    == mavlink::dialects::ardupilotmega::MavModeFlag::MAV_MODE_FLAG_SAFETY_ARMED;
 
                 component.autopilot =
                     Some(autopilot::AutoPilotType::from_u8(heartbeat.autopilot as u8));
@@ -221,21 +224,21 @@ impl Vehicle {
                     send_version_request(self.vehicle_id, header.component_id);
                 }
             }
-            mavlink::ardupilotmega::MavMessage::ATTITUDE(attitude) => {
+            mavlink::dialects::ardupilotmega::MavMessage::ATTITUDE(attitude) => {
                 component.attitude = Attitude {
                     roll: attitude.roll,
                     pitch: attitude.pitch,
                     yaw: attitude.yaw,
                 };
             }
-            mavlink::ardupilotmega::MavMessage::GLOBAL_POSITION_INT(global_position) => {
+            mavlink::dialects::ardupilotmega::MavMessage::GLOBAL_POSITION_INT(global_position) => {
                 component.position = Position {
                     latitude: global_position.lat as f64 / 1e7,  //degE7
                     longitude: global_position.lon as f64 / 1e7, //degE7
                     altitude: global_position.alt as f32 / 1e3,  //mm
                 };
             }
-            mavlink::ardupilotmega::MavMessage::AUTOPILOT_VERSION(autopilot_version) => {
+            mavlink::dialects::ardupilotmega::MavMessage::AUTOPILOT_VERSION(autopilot_version) => {
                 let major = ((autopilot_version.flight_sw_version >> 24) & 0xff) as u64;
                 let minor = ((autopilot_version.flight_sw_version >> 16) & 0xff) as u64;
                 let patch = ((autopilot_version.flight_sw_version >> 8) & 0xff) as u64;
@@ -284,7 +287,7 @@ impl Vehicle {
                     }
                 }
             }
-            mavlink::ardupilotmega::MavMessage::PARAM_VALUE(param_value) => {
+            mavlink::dialects::ardupilotmega::MavMessage::PARAM_VALUE(param_value) => {
                 let parameter_name =
                     autopilot::Parameter::string_from_param_id(&param_value.param_id);
                 component.context.parameters.insert(
@@ -332,8 +335,8 @@ impl Vehicle {
 }
 
 fn request_parameters(vehicle_id: u8, component_id: u8) {
-    let message = mavlink::ardupilotmega::MavMessage::PARAM_REQUEST_LIST(
-        mavlink::ardupilotmega::PARAM_REQUEST_LIST_DATA {
+    let message = mavlink::dialects::ardupilotmega::MavMessage::PARAM_REQUEST_LIST(
+        mavlink::dialects::ardupilotmega::PARAM_REQUEST_LIST_DATA {
             target_system: vehicle_id,
             target_component: component_id,
         },
@@ -347,23 +350,24 @@ pub async fn set_parameter(
     component_id: Option<u8>,
     parameter_name: String,
     value: f64,
-) -> Result<mavlink::ardupilotmega::MavMessage, String> {
+) -> Result<mavlink::dialects::ardupilotmega::MavMessage, String> {
     let vehicle_id = vehicle_id.unwrap_or(1); // default system_id
-    let component_id =
-        component_id.unwrap_or(mavlink::ardupilotmega::MavComponent::MAV_COMP_ID_AUTOPILOT1 as u8);
+    let component_id = component_id
+        .unwrap_or(mavlink::dialects::ardupilotmega::MavComponent::MAV_COMP_ID_AUTOPILOT1 as u8);
 
-    let message =
-        mavlink::ardupilotmega::MavMessage::PARAM_SET(mavlink::ardupilotmega::PARAM_SET_DATA {
+    let message = mavlink::dialects::ardupilotmega::MavMessage::PARAM_SET(
+        mavlink::dialects::ardupilotmega::PARAM_SET_DATA {
             param_value: value as f32,
             target_system: vehicle_id,
             target_component: component_id,
             param_id: parameter_name.as_str().into(),
-            param_type: mavlink::ardupilotmega::MavParamType::MAV_PARAM_TYPE_REAL64,
-        });
+            param_type: mavlink::dialects::ardupilotmega::MavParamType::MAV_PARAM_TYPE_REAL64,
+        },
+    );
 
     send_mavlink_message(message);
     wait_for_message(vehicle_id, component_id, |message| {
-        if let mavlink::ardupilotmega::MavMessage::PARAM_VALUE(param_value) = message {
+        if let mavlink::dialects::ardupilotmega::MavMessage::PARAM_VALUE(param_value) = message {
             Parameter::string_from_param_id(&param_value.param_id) == parameter_name
         } else {
             false
@@ -376,16 +380,16 @@ pub async fn set_parameter(
 pub async fn version(
     vehicle_id: Option<u8>,
     component_id: Option<u8>,
-) -> Result<mavlink::ardupilotmega::MavMessage, String> {
+) -> Result<mavlink::dialects::ardupilotmega::MavMessage, String> {
     let vehicle_id = vehicle_id.unwrap_or(1); // default system_id
-    let component_id =
-        component_id.unwrap_or(mavlink::ardupilotmega::MavComponent::MAV_COMP_ID_AUTOPILOT1 as u8);
+    let component_id = component_id
+        .unwrap_or(mavlink::dialects::ardupilotmega::MavComponent::MAV_COMP_ID_AUTOPILOT1 as u8);
 
     send_version_request(vehicle_id, component_id);
     wait_for_message(vehicle_id, component_id, |message| {
         matches!(
             message,
-            mavlink::ardupilotmega::MavMessage::AUTOPILOT_VERSION(_)
+            mavlink::dialects::ardupilotmega::MavMessage::AUTOPILOT_VERSION(_)
         )
     })
     .await
@@ -394,8 +398,8 @@ pub async fn version(
 }
 
 pub fn send_version_request(vehicle_id: u8, component_id: u8) {
-    let message = mavlink::ardupilotmega::MavMessage::COMMAND_LONG(
-        mavlink::ardupilotmega::COMMAND_LONG_DATA {
+    let message = mavlink::dialects::ardupilotmega::MavMessage::COMMAND_LONG(
+        mavlink::dialects::ardupilotmega::COMMAND_LONG_DATA {
             param1: 148.0, // AUTOPILOT_VERSION
             param2: 0.0,
             param3: 0.0,
@@ -403,7 +407,7 @@ pub fn send_version_request(vehicle_id: u8, component_id: u8) {
             param5: 0.0,
             param6: 0.0,
             param7: 0.0,
-            command: mavlink::ardupilotmega::MavCmd::MAV_CMD_REQUEST_MESSAGE,
+            command: mavlink::dialects::ardupilotmega::MavCmd::MAV_CMD_REQUEST_MESSAGE,
             target_system: vehicle_id,
             target_component: component_id,
             confirmation: 0,
@@ -417,9 +421,9 @@ pub async fn wait_for_message<F>(
     vehicle_id: u8,
     component_id: u8,
     condition: F,
-) -> Result<mavlink::ardupilotmega::MavMessage>
+) -> Result<mavlink::dialects::ardupilotmega::MavMessage>
 where
-    F: Fn(&mavlink::ardupilotmega::MavMessage) -> bool,
+    F: Fn(&mavlink::dialects::ardupilotmega::MavMessage) -> bool,
 {
     let mut receiver = BROADCAST_INNER.subscribe();
     let receive = async {
@@ -451,14 +455,14 @@ pub fn generic_arming(
     arm: bool,
 ) -> Result<()> {
     let vehicle_id = vehicle_id.unwrap_or(1); // default system_id
-    let component_id =
-        component_id.unwrap_or(mavlink::ardupilotmega::MavComponent::MAV_COMP_ID_AUTOPILOT1 as u8);
+    let component_id = component_id
+        .unwrap_or(mavlink::dialects::ardupilotmega::MavComponent::MAV_COMP_ID_AUTOPILOT1 as u8);
     let force = force.unwrap_or(false);
     // // 21196: force arming/disarming (e.g. override preflight checks and disarming in flight)
     let force = if force { 21196.0 } else { 0.0 };
     let arm = if arm { 1.0 } else { 0.0 };
-    let message = mavlink::ardupilotmega::MavMessage::COMMAND_LONG(
-        mavlink::ardupilotmega::COMMAND_LONG_DATA {
+    let message = mavlink::dialects::ardupilotmega::MavMessage::COMMAND_LONG(
+        mavlink::dialects::ardupilotmega::COMMAND_LONG_DATA {
             param1: arm,
             param2: force,
             param3: 0.0,
@@ -466,7 +470,7 @@ pub fn generic_arming(
             param5: 0.0,
             param6: 0.0,
             param7: 0.0,
-            command: mavlink::ardupilotmega::MavCmd::MAV_CMD_COMPONENT_ARM_DISARM,
+            command: mavlink::dialects::ardupilotmega::MavCmd::MAV_CMD_COMPONENT_ARM_DISARM,
             target_system: vehicle_id,
             target_component: component_id,
             confirmation: 0,
@@ -477,13 +481,14 @@ pub fn generic_arming(
     Ok(())
 }
 
-pub fn send_mavlink_message(message: mavlink::ardupilotmega::MavMessage) {
+pub fn send_mavlink_message(message: mavlink::dialects::ardupilotmega::MavMessage) {
     if let Err(e) = BROADCAST.send(message) {
         error!("Failed to send mavlink message: {e:?}");
     }
 }
 
-pub fn subscribe_mavlink_message() -> broadcast::Receiver<mavlink::ardupilotmega::MavMessage> {
+pub fn subscribe_mavlink_message()
+-> broadcast::Receiver<mavlink::dialects::ardupilotmega::MavMessage> {
     BROADCAST.subscribe()
 }
 
@@ -495,7 +500,12 @@ pub fn subscribe_parameters() -> broadcast::Receiver<HashMap<u8, HashMap<String,
     BROADCAST_VEHICLES_PARAMETERS.subscribe()
 }
 
-pub async fn update((header, message): (mavlink::MavHeader, mavlink::ardupilotmega::MavMessage)) {
+pub async fn update(
+    (header, message): (
+        mavlink::MavHeader,
+        mavlink::dialects::ardupilotmega::MavMessage,
+    ),
+) {
     let mut vehicles = DATA.vehicles.write().await;
     let vehicle = vehicles
         .vehicles
@@ -521,7 +531,9 @@ pub async fn parameters() -> HashMap<u8, HashMap<String, ParameterData>> {
         .map(|(vehicle_id, vehicle)| {
             let parameters = vehicle
                 .components
-                .get(&(mavlink::ardupilotmega::MavComponent::MAV_COMP_ID_AUTOPILOT1 as u8))
+                .get(
+                    &(mavlink::dialects::ardupilotmega::MavComponent::MAV_COMP_ID_AUTOPILOT1 as u8),
+                )
                 .map(|component| {
                     #[allow(irrefutable_let_patterns)]
                     if let VehicleComponents::Autopilot(component) = component {

@@ -23,15 +23,16 @@ fn init_cli() {
 
 fn sample_message() -> Arc<Protocol> {
     let header = mavlink::MavHeader::default();
-    let message =
-        mavlink::ardupilotmega::MavMessage::HEARTBEAT(mavlink::ardupilotmega::HEARTBEAT_DATA {
+    let message = mavlink::dialects::ardupilotmega::MavMessage::HEARTBEAT(
+        mavlink::dialects::ardupilotmega::HEARTBEAT_DATA {
             custom_mode: 0,
-            mavtype: mavlink::ardupilotmega::MavType::MAV_TYPE_ONBOARD_CONTROLLER,
-            autopilot: mavlink::ardupilotmega::MavAutopilot::MAV_AUTOPILOT_INVALID,
-            base_mode: mavlink::ardupilotmega::MavModeFlag::empty(),
-            system_status: mavlink::ardupilotmega::MavState::MAV_STATE_STANDBY,
+            mavtype: mavlink::dialects::ardupilotmega::MavType::MAV_TYPE_ONBOARD_CONTROLLER,
+            autopilot: mavlink::dialects::ardupilotmega::MavAutopilot::MAV_AUTOPILOT_INVALID,
+            base_mode: mavlink::dialects::ardupilotmega::MavModeFlag::empty(),
+            system_status: mavlink::dialects::ardupilotmega::MavState::MAV_STATE_STANDBY,
             mavlink_version: 0x3,
-        });
+        },
+    );
 
     Arc::new(Protocol::from_mavlink_raw(header, &message, "bench"))
 }

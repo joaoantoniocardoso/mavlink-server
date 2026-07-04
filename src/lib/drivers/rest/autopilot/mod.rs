@@ -78,7 +78,9 @@ impl Parameter {
             .to_string()
     }
 
-    pub fn from_param_value(param_value: mavlink::ardupilotmega::PARAM_VALUE_DATA) -> Self {
+    pub fn from_param_value(
+        param_value: mavlink::dialects::ardupilotmega::PARAM_VALUE_DATA,
+    ) -> Self {
         Self {
             name: Self::string_from_param_id(&param_value.param_id),
             value: param_value.param_value as f64,

@@ -470,8 +470,8 @@ mod tests {
             let sender = sender.clone();
 
             let header = mavlink::MavHeader::default();
-            let message = mavlink::ardupilotmega::MavMessage::default_message_from_id(
-                mavlink::ardupilotmega::HEARTBEAT_DATA::ID,
+            let message = mavlink::dialects::ardupilotmega::MavMessage::default_message_from_id(
+                mavlink::dialects::ardupilotmega::HEARTBEAT_DATA::ID,
             )
             .unwrap();
 

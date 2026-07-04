@@ -97,7 +97,7 @@ impl Zenoh {
                 }
             };
 
-            let content = match json5::from_str::<MAVLinkJSON<mavlink::ardupilotmega::MavMessage>>(
+            let content = match json5::from_str::<MAVLinkJSON<mavlink::dialects::ardupilotmega::MavMessage>>(
                 std::str::from_utf8(&sample.payload().to_bytes()).unwrap(),
             ) {
                 Ok(content) => content,
@@ -175,7 +175,7 @@ impl Zenoh {
             }
 
             let mavlink_json = match message
-                .to_mavlink_json::<mavlink::ardupilotmega::MavMessage>()
+                .to_mavlink_json::<mavlink::dialects::ardupilotmega::MavMessage>()
                 .await
             {
                 Ok(mavlink_json) => mavlink_json,

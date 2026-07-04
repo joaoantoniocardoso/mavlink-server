@@ -125,7 +125,7 @@ impl Driver for FakeSink {
             }
 
             let Ok(mavlink_json) = message
-                .to_mavlink_json::<mavlink::ardupilotmega::MavMessage>()
+                .to_mavlink_json::<mavlink::dialects::ardupilotmega::MavMessage>()
                 .await
                 .inspect_err(|error| debug!("Failed converting message to json: {error:?}"))
             else {
@@ -334,8 +334,10 @@ impl Driver for FakeSource {
                     };
 
                     let data =
-                        mavlink::ardupilotmega::MavMessage::default_message_from_id(message_id)
-                            .expect("Unknown message ID");
+                        mavlink::dialects::ardupilotmega::MavMessage::default_message_from_id(
+                            message_id,
+                        )
+                        .expect("Unknown message ID");
 
                     let origin: Arc<str> = Arc::from("fake_source");
 
@@ -489,8 +491,8 @@ impl Default for FakeSourceParams {
             name: crate::hub::generate_new_default_name(FakeSourceInfo.name()).unwrap(),
             period_us: 1_000_000,
             system_id: 42,
-            component_id: mavlink::ardupilotmega::MavComponent::MAV_COMP_ID_USER42 as u8,
-            message_id: mavlink::ardupilotmega::HEARTBEAT_DATA::ID,
+            component_id: mavlink::dialects::ardupilotmega::MavComponent::MAV_COMP_ID_USER42 as u8,
+            message_id: mavlink::dialects::ardupilotmega::HEARTBEAT_DATA::ID,
         }
     }
 }
