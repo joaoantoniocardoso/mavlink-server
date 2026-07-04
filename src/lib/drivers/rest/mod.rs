@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use axum::extract::ws;
-use tokio::sync::{RwLock, broadcast};
+use tokio::sync::broadcast;
 use tracing::*;
 
 use crate::{
@@ -16,7 +16,9 @@ use crate::{
     mavlink_json::MAVLinkJSON,
     protocol::Protocol,
     stats::{
-        accumulated::driver::{AccumulatedDriverStats, AccumulatedDriverStatsProvider},
+        accumulated::driver::{
+            AccumulatedDriverStats, AccumulatedDriverStatsProvider, AtomicDriverStats,
+        },
         driver::DriverUuid,
     },
     web::routes::v1::rest::websocket,
@@ -28,7 +30,7 @@ pub struct Rest {
     uuid: DriverUuid,
     on_message_input: Callbacks<Arc<Protocol>>,
     on_message_output: Callbacks<Arc<Protocol>>,
-    stats: Arc<RwLock<AccumulatedDriverStats>>,
+    stats: Arc<AtomicDriverStats>,
 }
 
 pub struct RestBuilder(Rest);
@@ -65,7 +67,7 @@ impl Rest {
             uuid: Self::generate_uuid(&name),
             on_message_input: Callbacks::default(),
             on_message_output: Callbacks::default(),
-            stats: Arc::new(RwLock::new(AccumulatedDriverStats::new(name, &RestInfo))),
+            stats: Arc::new(AtomicDriverStats::new(name, &RestInfo)),
         })
     }
 
@@ -92,7 +94,7 @@ impl Rest {
 
             trace!("Received message: {bus_message:?}");
 
-            context.stats.write().await.stats.update_input(&bus_message);
+            context.stats.update_input(&bus_message);
 
             for future in context.on_message_input.call_all(bus_message.clone()) {
                 if let Err(error) = future.await {
@@ -100,6 +102,8 @@ impl Rest {
                     continue;
                 }
             }
+
+            crate::hub::accumulate_hub_message(&bus_message);
 
             if let Err(error) = context.hub_sender.send(bus_message) {
                 error!("Failed to send message to hub: {error:?}");
@@ -136,7 +140,7 @@ impl Rest {
 
             trace!("Received message: {bus_message:?}");
 
-            context.stats.write().await.stats.update_input(&bus_message);
+            context.stats.update_input(&bus_message);
 
             for future in context.on_message_input.call_all(bus_message.clone()) {
                 if let Err(error) = future.await {
@@ -144,6 +148,8 @@ impl Rest {
                     continue;
                 }
             }
+
+            crate::hub::accumulate_hub_message(&bus_message);
 
             if let Err(error) = context.hub_sender.send(bus_message) {
                 error!("Failed to send message to hub: {error:?}");
@@ -182,7 +188,7 @@ impl Rest {
                 continue; // Don't do loopback
             }
 
-            context.stats.write().await.stats.update_output(&message);
+            context.stats.update_output(&message);
 
             for future in context.on_message_output.call_all(message.clone()) {
                 if let Err(error) = future.await {
@@ -287,13 +293,11 @@ impl Driver for Rest {
 #[async_trait::async_trait]
 impl AccumulatedDriverStatsProvider for Rest {
     async fn stats(&self) -> AccumulatedDriverStats {
-        self.stats.read().await.clone()
+        self.stats.snapshot()
     }
 
     async fn reset_stats(&self) {
-        let mut stats = self.stats.write().await;
-        stats.stats.input = None;
-        stats.stats.output = None
+        self.stats.reset();
     }
 }
 

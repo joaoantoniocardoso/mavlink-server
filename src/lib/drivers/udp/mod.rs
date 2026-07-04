@@ -41,7 +41,7 @@ where
         }
 
         if context.direction.can_send() {
-            context.stats.write().await.stats.update_output(&message);
+            context.stats.update_output(&message);
 
             for future in context.on_message_output.call_all(message.clone()) {
                 if let Err(error) = future.await {

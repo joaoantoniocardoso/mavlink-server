@@ -3,10 +3,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use futures::StreamExt;
 use mavlink_codec::codec::MavlinkCodec;
-use tokio::{
-    net::TcpStream,
-    sync::{RwLock, broadcast},
-};
+use tokio::{net::TcpStream, sync::broadcast};
 use tokio_util::codec::Framed;
 use tracing::*;
 
@@ -18,7 +15,9 @@ use crate::{
     },
     protocol::Protocol,
     stats::{
-        accumulated::driver::{AccumulatedDriverStats, AccumulatedDriverStatsProvider},
+        accumulated::driver::{
+            AccumulatedDriverStats, AccumulatedDriverStatsProvider, AtomicDriverStats,
+        },
         driver::DriverUuid,
     },
 };
@@ -31,7 +30,7 @@ pub struct TcpClient {
     direction: Direction,
     on_message_input: Callbacks<Arc<Protocol>>,
     on_message_output: Callbacks<Arc<Protocol>>,
-    stats: Arc<RwLock<AccumulatedDriverStats>>,
+    stats: Arc<AtomicDriverStats>,
 }
 
 pub struct TcpClientBuilder(TcpClient);
@@ -75,10 +74,7 @@ impl TcpClient {
             direction: Direction::Both,
             on_message_input: Callbacks::default(),
             on_message_output: Callbacks::default(),
-            stats: Arc::new(RwLock::new(AccumulatedDriverStats::new(
-                name,
-                &TcpClientInfo,
-            ))),
+            stats: Arc::new(AtomicDriverStats::new(name, &TcpClientInfo)),
         })
     }
 }
@@ -148,13 +144,11 @@ impl Driver for TcpClient {
 #[async_trait::async_trait]
 impl AccumulatedDriverStatsProvider for TcpClient {
     async fn stats(&self) -> AccumulatedDriverStats {
-        self.stats.read().await.clone()
+        self.stats.snapshot()
     }
 
     async fn reset_stats(&self) {
-        let mut stats = self.stats.write().await;
-        stats.stats.input = None;
-        stats.stats.output = None
+        self.stats.reset();
     }
 }
 

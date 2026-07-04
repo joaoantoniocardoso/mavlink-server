@@ -3,11 +3,11 @@ use std::sync::Arc;
 use anyhow::{Result, anyhow};
 use futures::{Sink, SinkExt, Stream, StreamExt};
 use mavlink_codec::{Packet, error::DecoderError};
-use tokio::sync::{RwLock, broadcast};
+use tokio::sync::broadcast;
 use tracing::*;
 
 use crate::{
-    callbacks::Callbacks, protocol::Protocol, stats::accumulated::driver::AccumulatedDriverStats,
+    callbacks::Callbacks, protocol::Protocol, stats::accumulated::driver::AtomicDriverStats,
 };
 
 #[derive(Clone)]
@@ -16,7 +16,7 @@ pub struct SendReceiveContext {
     pub hub_sender: broadcast::Sender<Arc<Protocol>>,
     pub on_message_output: Callbacks<Arc<Protocol>>,
     pub on_message_input: Callbacks<Arc<Protocol>>,
-    pub stats: Arc<RwLock<AccumulatedDriverStats>>,
+    pub stats: Arc<AtomicDriverStats>,
 }
 
 #[instrument(level = "debug", skip(writer, reader, context))]
@@ -102,7 +102,7 @@ where
 
         trace!("Received message: {message:?}");
 
-        context.stats.write().await.stats.update_input(&message);
+        context.stats.update_input(&message);
 
         for future in context.on_message_input.call_all(message.clone()) {
             if let Err(error) = future.await {
@@ -110,6 +110,8 @@ where
                 continue 'mainloop;
             }
         }
+
+        crate::hub::accumulate_hub_message(&message);
 
         if let Err(send_error) = context.hub_sender.send(message) {
             error!("Failed to send message to hub: {send_error:?}");
@@ -153,7 +155,7 @@ where
             continue; // Don't do loopback
         }
 
-        context.stats.write().await.stats.update_output(&message);
+        context.stats.update_output(&message);
 
         for future in context.on_message_output.call_all(message.clone()) {
             if let Err(error) = future.await {

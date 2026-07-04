@@ -4,7 +4,7 @@ use anyhow::{Context, Result};
 use chrono::DateTime;
 use mavlink::ardupilotmega::MavMessage;
 use mavlink_codec::Packet;
-use tokio::sync::{RwLock, broadcast};
+use tokio::sync::broadcast;
 use tracing::*;
 
 use crate::{
@@ -12,7 +12,9 @@ use crate::{
     drivers::{Driver, DriverInfo},
     protocol::Protocol,
     stats::{
-        accumulated::driver::{AccumulatedDriverStats, AccumulatedDriverStatsProvider},
+        accumulated::driver::{
+            AccumulatedDriverStats, AccumulatedDriverStatsProvider, AtomicDriverStats,
+        },
         driver::DriverUuid,
     },
 };
@@ -23,7 +25,7 @@ pub struct TlogReader {
     name: arc_swap::ArcSwap<String>,
     uuid: DriverUuid,
     on_message_input: Callbacks<Arc<Protocol>>,
-    stats: Arc<RwLock<AccumulatedDriverStats>>,
+    stats: Arc<AtomicDriverStats>,
 }
 
 pub struct TlogReaderBuilder(TlogReader);
@@ -59,10 +61,7 @@ impl TlogReader {
             name: arc_swap::ArcSwap::new(name.clone()),
             uuid: Self::generate_uuid(&path_str),
             on_message_input: Callbacks::default(),
-            stats: Arc::new(RwLock::new(AccumulatedDriverStats::new(
-                name,
-                &TlogReaderInfo,
-            ))),
+            stats: Arc::new(AtomicDriverStats::new(name, &TlogReaderInfo)),
         })
     }
 
@@ -128,7 +127,7 @@ impl TlogReader {
 
             let message = Arc::new(message);
 
-            self.stats.write().await.stats.update_input(&message);
+            self.stats.update_input(&message);
 
             for future in self.on_message_input.call_all(message.clone()) {
                 if let Err(error) = future.await {
@@ -136,6 +135,8 @@ impl TlogReader {
                     continue 'mainloop;
                 }
             }
+
+            crate::hub::accumulate_hub_message(&message);
 
             if let Err(error) = hub_sender.send(message) {
                 error!("Failed to send message to hub: {error:?}");
@@ -171,13 +172,11 @@ impl Driver for TlogReader {
 #[async_trait::async_trait]
 impl AccumulatedDriverStatsProvider for TlogReader {
     async fn stats(&self) -> AccumulatedDriverStats {
-        self.stats.read().await.clone()
+        self.stats.snapshot()
     }
 
     async fn reset_stats(&self) {
-        let mut stats = self.stats.write().await;
-        stats.stats.input = None;
-        stats.stats.output = None
+        self.stats.reset();
     }
 }
 

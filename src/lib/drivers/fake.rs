@@ -5,7 +5,7 @@ use bytes::{BufMut, BytesMut};
 use mavlink::{Message, MessageData};
 use mavlink_codec::{Packet, v2::V2Packet};
 use serde::{Deserialize, Serialize};
-use tokio::sync::{RwLock, broadcast};
+use tokio::sync::broadcast;
 use tracing::*;
 
 use crate::{
@@ -13,7 +13,9 @@ use crate::{
     drivers::{Driver, DriverInfo},
     protocol::Protocol,
     stats::{
-        accumulated::driver::{AccumulatedDriverStats, AccumulatedDriverStatsProvider},
+        accumulated::driver::{
+            AccumulatedDriverStats, AccumulatedDriverStatsProvider, AtomicDriverStats,
+        },
         driver::DriverUuid,
     },
 };
@@ -26,7 +28,7 @@ pub struct FakeSink {
     print_as_bytes: bool,
     print_as_json: bool,
     force_parse: bool,
-    stats: Arc<RwLock<AccumulatedDriverStats>>,
+    stats: Arc<AtomicDriverStats>,
 }
 
 impl FakeSink {
@@ -44,10 +46,7 @@ impl FakeSink {
             print_as_bytes: params.print_as_bytes,
             print_as_json: params.print_as_json,
             force_parse: params.force_parse,
-            stats: Arc::new(RwLock::new(AccumulatedDriverStats::new(
-                name,
-                &FakeSinkInfo,
-            ))),
+            stats: Arc::new(AtomicDriverStats::new(name, &FakeSinkInfo)),
         })
     }
 }
@@ -106,7 +105,7 @@ impl Driver for FakeSink {
                 }
             };
 
-            self.stats.write().await.stats.update_input(&message);
+            self.stats.update_input(&message);
 
             for future in self.on_message_input.call_all(message.clone()) {
                 if let Err(error) = future.await {
@@ -163,13 +162,11 @@ impl Driver for FakeSink {
 #[async_trait::async_trait]
 impl AccumulatedDriverStatsProvider for FakeSink {
     async fn stats(&self) -> AccumulatedDriverStats {
-        self.stats.read().await.clone()
+        self.stats.snapshot()
     }
 
     async fn reset_stats(&self) {
-        let mut stats = self.stats.write().await;
-        stats.stats.input = None;
-        stats.stats.output = None
+        self.stats.reset();
     }
 }
 
@@ -248,7 +245,7 @@ pub struct FakeSource {
     uuid: DriverUuid,
     period: std::time::Duration,
     on_message_output: Callbacks<Arc<Protocol>>,
-    stats: Arc<RwLock<AccumulatedDriverStats>>,
+    stats: Arc<AtomicDriverStats>,
     system_id: u8,
     component_id: u8,
     message_id: u32,
@@ -267,10 +264,7 @@ impl FakeSource {
             uuid: Self::generate_uuid(&name),
             period: std::time::Duration::from_micros(params.period_us),
             on_message_output: Callbacks::default(),
-            stats: Arc::new(RwLock::new(AccumulatedDriverStats::new(
-                name,
-                &FakeSourceInfo,
-            ))),
+            stats: Arc::new(AtomicDriverStats::new(name, &FakeSourceInfo)),
             system_id: params.system_id,
             component_id: params.component_id,
             message_id: params.message_id,
@@ -385,7 +379,7 @@ impl Driver for FakeSource {
                 break;
             };
 
-            self.stats.write().await.stats.update_output(&message);
+            self.stats.update_output(&message);
 
             for future in self.on_message_output.call_all(message.clone()) {
                 if let Err(error) = future.await {
@@ -393,6 +387,8 @@ impl Driver for FakeSource {
                     continue 'mainloop;
                 }
             }
+
+            crate::hub::accumulate_hub_message(&message);
 
             if let Err(error) = hub_sender.send(message) {
                 error!("Failed to send message to hub: {error:?}");
@@ -420,13 +416,11 @@ impl Driver for FakeSource {
 #[async_trait::async_trait]
 impl AccumulatedDriverStatsProvider for FakeSource {
     async fn stats(&self) -> AccumulatedDriverStats {
-        self.stats.read().await.clone()
+        self.stats.snapshot()
     }
 
     async fn reset_stats(&self) {
-        let mut stats = self.stats.write().await;
-        stats.stats.input = None;
-        stats.stats.output = None
+        self.stats.reset();
     }
 }
 

@@ -26,9 +26,6 @@ pub struct HubActor {
     component_id: Arc<RwLock<u8>>,
     system_id: Arc<RwLock<u8>>,
     heartbeat_task: tokio::task::JoinHandle<Result<()>>,
-    hub_stats_task: tokio::task::JoinHandle<Result<()>>,
-    hub_stats: Arc<RwLock<AccumulatedStatsInner>>,
-    hub_messages_stats: Arc<RwLock<AccumulatedHubMessagesStats>>,
 }
 
 #[derive(Debug)]
@@ -103,25 +100,12 @@ impl HubActor {
             Self::heartbeat_task(bcst_sender, component_id, system_id, frequency)
         });
 
-        let hub_stats = Arc::new(RwLock::new(AccumulatedStatsInner::default()));
-        let hub_messages_stats = Arc::new(RwLock::new(AccumulatedHubMessagesStats::default()));
-        let hub_stats_task = tokio::spawn({
-            let bcst_sender = bcst_sender.clone();
-            let hub_stats = hub_stats.clone();
-            let hub_messages_stats = hub_messages_stats.clone();
-
-            Self::stats_task(bcst_sender, hub_stats, hub_messages_stats)
-        });
-
         Self {
             drivers: IndexMap::new(),
             bcst_sender,
             component_id,
             system_id,
             heartbeat_task,
-            hub_stats_task,
-            hub_stats,
-            hub_messages_stats,
         }
     }
 
@@ -235,6 +219,8 @@ impl HubActor {
                 Arc::clone(&origin),
             ));
 
+            crate::hub::accumulate_hub_message(&message);
+
             if let Err(error) = bcst_sender.send(message) {
                 error!("Failed to send HEARTBEAT message: {error}");
             }
@@ -243,22 +229,6 @@ impl HubActor {
                 burst_msgs_counter += 1;
             }
         }
-    }
-
-    async fn stats_task(
-        bcst_sender: broadcast::Sender<Arc<Protocol>>,
-        hub_stats: Arc<RwLock<AccumulatedStatsInner>>,
-        hub_messages_stats: Arc<RwLock<AccumulatedHubMessagesStats>>,
-    ) -> Result<()> {
-        let mut bsct_receiver = bcst_sender.subscribe();
-
-        while let Ok(message) = bsct_receiver.recv().await {
-            hub_stats.write().await.update(&message);
-
-            hub_messages_stats.write().await.update(&message);
-        }
-
-        Ok(())
     }
 
     #[instrument(level = "debug", skip(self))]
@@ -281,12 +251,12 @@ impl HubActor {
 
     #[instrument(level = "debug", skip(self))]
     async fn get_hub_stats(&self) -> AccumulatedStatsInner {
-        self.hub_stats.read().await.clone()
+        crate::hub::hub_stats_snapshot()
     }
 
     #[instrument(level = "debug", skip(self))]
     async fn get_hub_messages_stats(&self) -> AccumulatedHubMessagesStats {
-        self.hub_messages_stats.read().await.clone()
+        crate::hub::hub_messages_stats_snapshot()
     }
 
     #[instrument(level = "debug", skip(self))]
@@ -295,9 +265,7 @@ impl HubActor {
             driver_runner.driver.reset_stats().await;
         }
 
-        *self.hub_stats.write().await = AccumulatedStatsInner::default();
-
-        *self.hub_messages_stats.write().await = AccumulatedHubMessagesStats::default();
+        crate::hub::reset_hub_accumulators();
 
         Ok(())
     }

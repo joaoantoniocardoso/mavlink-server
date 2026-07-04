@@ -12,7 +12,9 @@ use crate::{
     drivers::{Driver, DriverInfo},
     protocol::Protocol,
     stats::{
-        accumulated::driver::{AccumulatedDriverStats, AccumulatedDriverStatsProvider},
+        accumulated::driver::{
+            AccumulatedDriverStats, AccumulatedDriverStatsProvider, AtomicDriverStats,
+        },
         driver::DriverUuid,
     },
 };
@@ -24,7 +26,7 @@ pub struct TlogWriter {
     name: arc_swap::ArcSwap<String>,
     uuid: DriverUuid,
     on_message_output: Callbacks<Arc<Protocol>>,
-    stats: Arc<RwLock<AccumulatedDriverStats>>,
+    stats: Arc<AtomicDriverStats>,
 }
 
 #[derive(Debug, strum_macros::EnumString)]
@@ -78,10 +80,7 @@ impl TlogWriter {
             file_creation_condition,
             uuid: Self::generate_uuid(&path_str),
             on_message_output: Callbacks::default(),
-            stats: Arc::new(RwLock::new(AccumulatedDriverStats::new(
-                name,
-                &TlogWriterInfo,
-            ))),
+            stats: Arc::new(AtomicDriverStats::new(name, &TlogWriterInfo)),
         })
     }
 
@@ -108,7 +107,7 @@ impl TlogWriter {
 
             let timestamp = chrono::Utc::now().timestamp_micros() as u64;
 
-            self.stats.write().await.stats.update_output(&message);
+            self.stats.update_output(&message);
 
             for future in self.on_message_output.call_all(message.clone()) {
                 if let Err(error) = future.await {
@@ -220,13 +219,11 @@ impl Driver for TlogWriter {
 #[async_trait::async_trait]
 impl AccumulatedDriverStatsProvider for TlogWriter {
     async fn stats(&self) -> AccumulatedDriverStats {
-        self.stats.read().await.clone()
+        self.stats.snapshot()
     }
 
     async fn reset_stats(&self) {
-        let mut stats = self.stats.write().await;
-        stats.stats.input = None;
-        stats.stats.output = None
+        self.stats.reset();
     }
 }
 pub struct TlogWriterInfo;

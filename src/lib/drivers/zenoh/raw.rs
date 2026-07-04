@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use mavlink_codec::codec::MavlinkCodec;
-use tokio::sync::{RwLock, broadcast};
+use tokio::sync::broadcast;
 use tracing::*;
 
 use crate::{
@@ -14,7 +14,9 @@ use crate::{
     },
     protocol::Protocol,
     stats::{
-        accumulated::driver::{AccumulatedDriverStats, AccumulatedDriverStatsProvider},
+        accumulated::driver::{
+            AccumulatedDriverStats, AccumulatedDriverStatsProvider, AtomicDriverStats,
+        },
         driver::DriverUuid,
     },
 };
@@ -28,7 +30,7 @@ pub struct ZenohRaw {
     uuid: DriverUuid,
     on_message_input: Callbacks<Arc<Protocol>>,
     on_message_output: Callbacks<Arc<Protocol>>,
-    stats: Arc<RwLock<AccumulatedDriverStats>>,
+    stats: Arc<AtomicDriverStats>,
 }
 
 pub struct ZenohRawBuilder(ZenohRaw);
@@ -65,10 +67,7 @@ impl ZenohRaw {
             uuid: Self::generate_uuid(&name),
             on_message_input: Callbacks::default(),
             on_message_output: Callbacks::default(),
-            stats: Arc::new(RwLock::new(AccumulatedDriverStats::new(
-                name,
-                &ZenohRawInfo,
-            ))),
+            stats: Arc::new(AtomicDriverStats::new(name, &ZenohRawInfo)),
         })
     }
 }
@@ -156,13 +155,11 @@ impl Driver for ZenohRaw {
 #[async_trait::async_trait]
 impl AccumulatedDriverStatsProvider for ZenohRaw {
     async fn stats(&self) -> AccumulatedDriverStats {
-        self.stats.read().await.clone()
+        self.stats.snapshot()
     }
 
     async fn reset_stats(&self) {
-        let mut stats = self.stats.write().await;
-        stats.stats.input = None;
-        stats.stats.output = None
+        self.stats.reset();
     }
 }
 

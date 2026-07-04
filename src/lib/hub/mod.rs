@@ -16,8 +16,9 @@ use crate::{
     protocol::Protocol,
     stats::{
         accumulated::{
-            AccumulatedStatsInner, driver::AccumulatedDriversStats,
-            messages::AccumulatedHubMessagesStats,
+            AccumulatedStatsInner, AtomicAccumulatedStats,
+            driver::AccumulatedDriversStats,
+            messages::{AccumulatedHubMessagesStats, AtomicHubMessagesStats},
         },
         driver::DriverUuid,
     },
@@ -34,6 +35,32 @@ lazy_static! {
 
 lazy_static! {
     static ref NAMES_MAP: Arc<Mutex<IndexMap<String, u32>>> = Default::default();
+}
+
+lazy_static! {
+    static ref HUB_STATS: AtomicAccumulatedStats = AtomicAccumulatedStats::default();
+    static ref HUB_MESSAGES_STATS: AtomicHubMessagesStats = AtomicHubMessagesStats::default();
+}
+
+/// Accumulates a message into the hub-level stats. Called inline from every path
+/// that publishes to the hub broadcast, replacing the former dedicated stats
+/// subscriber task.
+pub fn accumulate_hub_message(message: &Arc<Protocol>) {
+    HUB_STATS.update(message);
+    HUB_MESSAGES_STATS.update(message);
+}
+
+pub(crate) fn hub_stats_snapshot() -> AccumulatedStatsInner {
+    HUB_STATS.snapshot().unwrap_or_default()
+}
+
+pub(crate) fn hub_messages_stats_snapshot() -> AccumulatedHubMessagesStats {
+    HUB_MESSAGES_STATS.snapshot()
+}
+
+pub(crate) fn reset_hub_accumulators() {
+    HUB_STATS.reset();
+    HUB_MESSAGES_STATS.reset();
 }
 
 struct Hub {

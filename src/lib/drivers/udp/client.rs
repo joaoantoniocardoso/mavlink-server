@@ -3,10 +3,7 @@ use std::{net::SocketAddr, sync::Arc};
 use anyhow::{Result, anyhow};
 use futures::{Sink, Stream, StreamExt};
 use mavlink_codec::{Packet, codec::MavlinkCodec, error::DecoderError};
-use tokio::{
-    net::UdpSocket,
-    sync::{RwLock, broadcast},
-};
+use tokio::{net::UdpSocket, sync::broadcast};
 use tokio_util::udp::UdpFramed;
 use tracing::*;
 
@@ -17,7 +14,9 @@ use crate::{
     },
     protocol::Protocol,
     stats::{
-        accumulated::driver::{AccumulatedDriverStats, AccumulatedDriverStatsProvider},
+        accumulated::driver::{
+            AccumulatedDriverStats, AccumulatedDriverStatsProvider, AtomicDriverStats,
+        },
         driver::DriverUuid,
     },
 };
@@ -30,7 +29,7 @@ pub struct UdpClient {
     direction: Direction,
     on_message_input: Callbacks<Arc<Protocol>>,
     on_message_output: Callbacks<Arc<Protocol>>,
-    stats: Arc<RwLock<AccumulatedDriverStats>>,
+    stats: Arc<AtomicDriverStats>,
 }
 
 pub struct UdpClientBuilder(UdpClient);
@@ -74,10 +73,7 @@ impl UdpClient {
             direction: Direction::Both,
             on_message_input: Callbacks::default(),
             on_message_output: Callbacks::default(),
-            stats: Arc::new(RwLock::new(AccumulatedDriverStats::new(
-                name,
-                &UdpClientInfo,
-            ))),
+            stats: Arc::new(AtomicDriverStats::new(name, &UdpClientInfo)),
         })
     }
 }
@@ -225,7 +221,7 @@ where
 
         trace!(origin = ?remote_addr, "Received message: {message:?}");
 
-        context.stats.write().await.stats.update_input(&message);
+        context.stats.update_input(&message);
 
         for future in context.on_message_input.call_all(message.clone()) {
             if let Err(error) = future.await {
@@ -233,6 +229,8 @@ where
                 continue 'mainloop;
             }
         }
+
+        crate::hub::accumulate_hub_message(&message);
 
         if let Err(send_error) = context.hub_sender.send(message) {
             error!(origin = ?remote_addr, "Failed to send message to hub: {send_error:?}");
@@ -250,13 +248,11 @@ where
 #[async_trait::async_trait]
 impl AccumulatedDriverStatsProvider for UdpClient {
     async fn stats(&self) -> AccumulatedDriverStats {
-        self.stats.read().await.clone()
+        self.stats.snapshot()
     }
 
     async fn reset_stats(&self) {
-        let mut stats = self.stats.write().await;
-        stats.stats.input = None;
-        stats.stats.output = None
+        self.stats.reset();
     }
 }
 
