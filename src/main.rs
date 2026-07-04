@@ -27,8 +27,12 @@ async fn main() -> Result<()> {
         hub::add_driver(driver).await?;
     }
 
-    // This will block until the web server is stopped, with this, the application ends
-    web::run(cli::web_server()).await;
+    if cli::no_web() {
+        tokio::signal::ctrl_c().await?;
+    } else {
+        // This will block until the web server is stopped, with this, the application ends
+        web::run(cli::web_server()).await;
+    }
 
     for (id, driver_info) in hub::drivers().await? {
         debug!("Removing driver id {id:?} ({driver_info:?})");
