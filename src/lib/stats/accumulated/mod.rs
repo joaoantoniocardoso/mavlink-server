@@ -1,7 +1,10 @@
 pub mod driver;
 pub mod messages;
 
-use std::sync::Arc;
+use std::sync::{
+    Arc,
+    atomic::{AtomicU64, Ordering},
+};
 
 use serde::Serialize;
 
@@ -14,6 +17,59 @@ pub struct AccumulatedStatsInner {
     pub messages: u64,
     pub bytes: u64,
     pub delay: u64,
+}
+
+/// Lock-free counterpart of [`AccumulatedStatsInner`] used on the per-message
+/// hot path. Writers call [`AtomicAccumulatedStats::update`] without any lock or
+/// `.await`; readers take a [`AtomicAccumulatedStats::snapshot`] (done once per
+/// stats period).
+///
+/// Only the counters needed to derive [`crate::stats::StatsInner`] are tracked.
+/// The `last_message` payload is intentionally not retained here: it was
+/// write-only in the previous accumulators (never read by any consumer), so
+/// cloning the `Arc<Protocol>` on every message was pure overhead.
+#[derive(Debug, Default)]
+pub struct AtomicAccumulatedStats {
+    last_update_us: AtomicU64,
+    messages: AtomicU64,
+    bytes: AtomicU64,
+    delay: AtomicU64,
+}
+
+impl AtomicAccumulatedStats {
+    pub fn update(&self, message: &Arc<Protocol>) {
+        let now = chrono::Utc::now().timestamp_micros() as u64;
+
+        self.last_update_us.store(now, Ordering::Relaxed);
+        self.bytes
+            .fetch_add(message.packet_size() as u64, Ordering::Relaxed);
+        self.messages.fetch_add(1, Ordering::Relaxed);
+        self.delay
+            .fetch_add(now.wrapping_sub(message.timestamp), Ordering::Relaxed);
+    }
+
+    /// Returns `None` until at least one message has been recorded, matching the
+    /// `Option` semantics of the previous per-driver/hub accumulators.
+    pub fn snapshot(&self) -> Option<AccumulatedStatsInner> {
+        let messages = self.messages.load(Ordering::Relaxed);
+        if messages == 0 {
+            return None;
+        }
+
+        Some(AccumulatedStatsInner {
+            last_message: None,
+            last_update_us: self.last_update_us.load(Ordering::Relaxed),
+            messages,
+            bytes: self.bytes.load(Ordering::Relaxed),
+            delay: self.delay.load(Ordering::Relaxed),
+        })
+    }
+
+    pub fn reset(&self) {
+        self.messages.store(0, Ordering::Relaxed);
+        self.bytes.store(0, Ordering::Relaxed);
+        self.delay.store(0, Ordering::Relaxed);
+    }
 }
 
 impl Default for AccumulatedStatsInner {
