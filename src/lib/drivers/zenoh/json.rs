@@ -1,7 +1,7 @@
 use std::{collections::HashMap, sync::Arc};
 
 use anyhow::Result;
-use mavlink::{self, Message};
+use mavlink;
 use tokio::sync::broadcast;
 use tracing::*;
 use zenoh;
@@ -97,23 +97,34 @@ impl Zenoh {
                 }
             };
 
-            let content = match json5::from_str::<MAVLinkJSON<mavlink::dialects::ardupilotmega::MavMessage>>(
-                std::str::from_utf8(&sample.payload().to_bytes()).unwrap(),
-            ) {
-                Ok(content) => content,
-                Err(error) => {
-                    debug!(
-                        "Failed to parse message, not a valid MAVLinkMessage: {sample:?}. Error: {error:?}"
-                    );
-                    continue;
-                }
-            };
+            let payload = sample.payload().to_bytes();
 
-            let bus_message = Arc::new(Protocol::from_mavlink_raw(
-                content.header.inner,
-                &content.message,
+            // Fast path: strict-JSON reverse transcoder, seeding the JSON cache.
+            let bus_message = if let Some(protocol) = crate::protocol::Protocol::from_json_bytes(
                 Arc::clone(&origin),
-            ));
+                bytes::Bytes::copy_from_slice(&payload),
+            ) {
+                Arc::new(protocol)
+            } else {
+                // Fallback: permissive JSON5 via the typed serde path.
+                let content = match json5::from_str::<
+                    MAVLinkJSON<mavlink::dialects::ardupilotmega::MavMessage>,
+                >(std::str::from_utf8(&payload).unwrap())
+                {
+                    Ok(content) => content,
+                    Err(error) => {
+                        debug!(
+                            "Failed to parse message, not a valid MAVLinkMessage: {sample:?}. Error: {error:?}"
+                        );
+                        continue;
+                    }
+                };
+                Arc::new(Protocol::from_mavlink_raw(
+                    content.header.inner,
+                    &content.message,
+                    Arc::clone(&origin),
+                ))
+            };
 
             trace!("Received message: {bus_message:?}");
 
@@ -174,43 +185,49 @@ impl Zenoh {
                 }
             }
 
-            let mavlink_json = match message
-                .to_mavlink_json::<mavlink::dialects::ardupilotmega::MavMessage>()
-                .await
-            {
-                Ok(mavlink_json) => mavlink_json,
-                Err(error) => {
-                    error!("Failed converting to mavlink json: {error:?}");
-                    continue;
-                }
+            use mavlink_codec::mavlink_json::{generated, rt};
+
+            // Per-field fan-out needs the descriptor + wire frame; a frame we cannot transcode to
+            // the wire (unknown JSON type) has nothing to publish here, so skip it.
+            let Some(packet) = message.wire() else {
+                debug!("Skipping message with no wire representation");
+                continue;
             };
 
-            let message_name = mavlink_json.message.message_name();
-
-            let json_string = &match json5::to_string(&mavlink_json) {
-                Ok(json) => json,
-                Err(error) => {
-                    error!("Failed to transform mavlink message {message_name} to json: {error:?}");
-                    continue;
-                }
+            // Resolve the descriptor for this frame; unknown ids are not in the
+            // compiled dialect, so skip (same as the old typed path failing).
+            let Some(desc) = generated::descriptor(packet.message_id()) else {
+                debug!(
+                    "Skipping message id {}: not in dialect",
+                    packet.message_id()
+                );
+                continue;
             };
+            let message_name = desc.name;
+
+            // One pass: whole-message JSON + byte ranges of every field's value.
+            let mut blob: Vec<u8> = Vec::with_capacity(256);
+            let mut ranges = vec![(0u32, 0u32); desc.fields.len()];
+            rt::to_json_indexed(packet, desc, &mut blob, &mut ranges);
+            let blob = bytes::Bytes::from(blob);
+            let json_string = std::str::from_utf8(&blob).unwrap();
 
             let out_topic_name = format!("{TOPIC_PREFIX}/out");
             Self::publish_json(&session, &mut publishers, &out_topic_name, json_string).await;
 
-            let header = &mavlink_json.header.inner;
             let message_topic_name = format!(
                 "mavlink/{}/{}/{}",
-                header.system_id, header.component_id, message_name
+                packet.system_id(),
+                packet.component_id(),
+                message_name
             );
             Self::publish_json(&session, &mut publishers, &message_topic_name, json_string).await;
 
-            // for each key inside mavlink_json and publish under topic_name/field_name
-            let message_value = serde_json::to_value(&mavlink_json.message).unwrap();
-            for (field_name, field_value) in message_value.as_object().unwrap() {
-                let field_topic_name = format!("{message_topic_name}/{field_name}");
-                let field_json = json5::to_string(field_value).unwrap();
-                Self::publish_json(&session, &mut publishers, &field_topic_name, &field_json).await;
+            // Per-field: slice each value straight out of the single blob (no re-serialize).
+            for (field, &(start, end)) in desc.fields.iter().zip(ranges.iter()) {
+                let field_topic_name = format!("{message_topic_name}/{}", field.name);
+                let field_json = std::str::from_utf8(&blob[start as usize..end as usize]).unwrap();
+                Self::publish_json(&session, &mut publishers, &field_topic_name, field_json).await;
             }
         }
 
