@@ -164,12 +164,17 @@ where
             }
         }
 
-        if let Err(error) = writer.send((**message).clone()).await {
+        let Some(packet) = message.wire() else {
+            trace!("Skipping message with no wire representation for {identifier}");
+            continue;
+        };
+
+        if let Err(error) = writer.send(packet.clone()).await {
             error!("Failed to send message: {error:?}");
             break;
         }
 
-        trace!("Message sent to {identifier}: {:?}", message.as_slice());
+        trace!("Message sent to {identifier}: {:?}", packet.as_slice());
     }
 
     debug!("Driver sender task stopped!");

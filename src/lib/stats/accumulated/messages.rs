@@ -26,14 +26,22 @@ pub struct AccumulatedComponentMessageStats {
 
 impl AccumulatedHubMessagesStats {
     pub fn update(&mut self, message: &Arc<Protocol>) {
+        let (Some(system_id), Some(component_id), Some(message_id)) = (
+            message.system_id(),
+            message.component_id(),
+            message.message_id(),
+        ) else {
+            return;
+        };
+
         self.systems_messages_stats
-            .entry(*message.system_id())
+            .entry(system_id)
             .or_default()
             .components_messages_stats
-            .entry(*message.component_id())
+            .entry(component_id)
             .or_default()
             .messages_stats
-            .entry(message.message_id())
+            .entry(message_id)
             .and_modify(|accumulated_stats| accumulated_stats.update(message))
             .or_insert_with(|| AccumulatedStatsInner::new(message));
     }
@@ -52,11 +60,15 @@ pub struct AtomicHubMessagesStats {
 
 impl AtomicHubMessagesStats {
     pub fn update(&self, message: &Arc<Protocol>) {
-        let key = (
-            *message.system_id(),
-            *message.component_id(),
+        let (Some(system_id), Some(component_id), Some(message_id)) = (
+            message.system_id(),
+            message.component_id(),
             message.message_id(),
-        );
+        ) else {
+            return;
+        };
+
+        let key = (system_id, component_id, message_id);
 
         if let Some(entry) = self.entries.read().unwrap().get(&key) {
             entry.update(message);

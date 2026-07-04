@@ -48,9 +48,9 @@ pub(super) async fn recv_ftp(
     loop {
         match receiver.recv().await {
             Ok(protocol) => {
-                if protocol.message_id() != FTP_MESSAGE_ID
-                    || *protocol.system_id() != target_system
-                    || *protocol.component_id() != target_component
+                if protocol.message_id() != Some(FTP_MESSAGE_ID)
+                    || protocol.system_id() != Some(target_system)
+                    || protocol.component_id() != Some(target_component)
                 {
                     continue;
                 }

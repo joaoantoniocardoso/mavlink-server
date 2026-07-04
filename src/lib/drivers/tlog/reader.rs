@@ -103,13 +103,9 @@ impl TlogReader {
             reader.consume(8);
             assert_eq!(reader.peek_exact(1).await?[0], mavlink::MAV_STX_V2);
 
-            let message =
+            let packet =
                 match mavlink::read_v2_raw_message_async::<MavMessage, _>(&mut reader).await {
-                    Ok(message) => Protocol::new_with_timestamp(
-                        us_since_epoch,
-                        Arc::clone(&origin),
-                        Packet::from(message),
-                    ),
+                    Ok(message) => Packet::from(message),
                     Err(error) => {
                         match error {
                             mavlink::error::MessageReadError::Io(_) => (),
@@ -121,11 +117,15 @@ impl TlogReader {
                         continue;
                     }
                 };
-            reader.consume(message.bytes().len() - 1);
+            reader.consume(packet.bytes().len() - 1);
 
-            trace!("Parsed message: {:?}", message.bytes());
+            trace!("Parsed message: {:?}", packet.bytes());
 
-            let message = Arc::new(message);
+            let message = Arc::new(Protocol::new_with_timestamp(
+                us_since_epoch,
+                Arc::clone(&origin),
+                packet,
+            ));
 
             self.stats.update_input(&message);
 
@@ -254,7 +254,9 @@ mod tests {
                     let messages_received = messages_received_per_id.clone();
 
                     async move {
-                        let message_id = message.message_id();
+                        let Some(message_id) = message.message_id() else {
+                            return Ok(());
+                        };
 
                         let mut messages_received = messages_received.write().await;
                         if let Some(samples) = messages_received.get_mut(&message_id) {
@@ -321,7 +323,7 @@ mod tests {
             .map(|message| {
                 let parsed_message = mavlink::MavFrame::<MavMessage>::deser(
                     mavlink::MavlinkVersion::V2,
-                    &message.bytes()[4..],
+                    &message.wire().expect("tlog message has wire frame").bytes()[4..],
                 );
 
                 (message.timestamp, parsed_message)

@@ -116,7 +116,11 @@ impl TlogWriter {
                 }
             }
 
-            let raw_bytes = message.bytes();
+            let Some(packet) = message.wire() else {
+                trace!("Skipping tlog write for message with no wire representation");
+                continue;
+            };
+            let raw_bytes = packet.bytes();
             writer.write_all(&timestamp.to_be_bytes()).await?;
             writer.write_all(raw_bytes).await?;
             writer.flush().await?;
@@ -130,7 +134,9 @@ impl TlogWriter {
                             "System ID should always be Some at this point because it was replaced when armed, which is the condition to reach this part",
                         );
 
-                if *message.system_id() != system_id || message.component_id() != component_id {
+                if message.system_id() != Some(system_id)
+                    || message.component_id() != Some(*component_id)
+                {
                     continue;
                 }
 
@@ -356,13 +362,14 @@ async fn wait_for_arm(
     loop {
         let message = hub_receiver.recv().await?;
 
-        if message.component_id() == component_id
+        if message.component_id() == Some(*component_id)
             && matches!(check_arm_state(&message), Some(ArmState::Armed))
         {
-            debug!(
-                "Received arm from system {:?}. Current: {system_id:?}",
-                message.system_id()
-            );
+            let Some(msg_system_id) = message.system_id() else {
+                continue;
+            };
+
+            debug!("Received arm from system {msg_system_id:?}. Current: {system_id:?}");
 
             let current_system_id = *system_id.read().await;
 
@@ -372,17 +379,17 @@ async fn wait_for_arm(
                     system_id
                         .write()
                         .await
-                        .replace(*message.system_id())
+                        .replace(msg_system_id)
                         .context("This should always be None")
                         .expect_err("This should never be Ok");
 
-                    debug!("Expected System ID updated to {system_id:?}");
+                    debug!("Expected System ID updated to {msg_system_id:?}");
 
-                    *message.system_id()
+                    msg_system_id
                 }
             };
 
-            if *message.system_id() == system_id {
+            if msg_system_id == system_id {
                 break;
             }
         }
@@ -400,13 +407,14 @@ enum ArmState {
 fn check_arm_state(message: &Arc<Protocol>) -> Option<ArmState> {
     use mavlink::MessageData;
 
-    if message.message_id() != mavlink::dialects::ardupilotmega::HEARTBEAT_DATA::ID {
+    if message.message_id() != Some(mavlink::dialects::ardupilotmega::HEARTBEAT_DATA::ID) {
         return None;
     }
 
     const BASE_MODE_BYTE: usize = 6; // From: https://mavlink.io/en/messages/common.html#HEARTBEAT
 
     let base_mode = message
+        .wire()?
         .payload()
         .get(BASE_MODE_BYTE)
         .cloned()

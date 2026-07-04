@@ -52,7 +52,12 @@ where
                 }
             }
 
-            if let Err(io_error) = writer.send(((**message).clone(), *remote_addr)).await {
+            let Some(packet) = message.wire() else {
+                trace!(client = ?remote_addr, "Skipping message with no wire representation");
+                continue;
+            };
+
+            if let Err(io_error) = writer.send((packet.clone(), *remote_addr)).await {
                 match io_error.kind() {
                     std::io::ErrorKind::ConnectionRefused => {
                         trace!(client = ?remote_addr, "Failed send message: {io_error}");
@@ -65,7 +70,7 @@ where
                 break;
             }
 
-            trace!("Message sent to {remote_addr}: {:?}", message.as_slice());
+            trace!("Message sent to {remote_addr}: {:?}", packet.as_slice());
         }
     }
     Ok(())
