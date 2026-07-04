@@ -5,16 +5,13 @@ use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_m
 use mavlink_server::{
     cli,
     protocol::Protocol,
-    stats::accumulated::{
-        AccumulatedStatsInner, driver::AccumulatedDriverStatsInner,
-        messages::AccumulatedHubMessagesStats,
-    },
+    stats::accumulated::{AtomicAccumulatedStats, messages::AtomicHubMessagesStats},
 };
-use tokio::{runtime::Runtime, sync::RwLock};
+use tokio::runtime::Runtime;
 
 /// Number of messages recorded per benchmark iteration. Amortizes the
-/// `block_on` overhead so the reported per-element time reflects the stats
-/// update cost itself.
+/// per-iteration harness overhead so the reported per-element time reflects the
+/// stats update cost itself.
 const BATCH: u64 = 1000;
 
 fn init_cli() {
@@ -41,11 +38,15 @@ fn sample_message() -> Arc<Protocol> {
 
 /// Per-message driver stats update, as done once on receive and once per output
 /// driver on send in the drivers' hot loops.
+///
+/// The harness (tokio `Runtime` + `block_on` + `Arc` + BATCH loop) is identical
+/// to the committed baseline; only the inner stats operation differs, so the
+/// `--baseline before` comparison isolates the accumulator cost.
 fn bench_driver_update(c: &mut Criterion) {
     init_cli();
     let message = sample_message();
     let rt = Runtime::new().unwrap();
-    let stats = Arc::new(RwLock::new(AccumulatedDriverStatsInner::default()));
+    let stats = Arc::new(AtomicAccumulatedStats::default());
 
     let mut group = c.benchmark_group("stats");
     group.throughput(Throughput::Elements(BATCH));
@@ -53,7 +54,7 @@ fn bench_driver_update(c: &mut Criterion) {
         b.iter(|| {
             rt.block_on(async {
                 for _ in 0..BATCH {
-                    stats.write().await.update_input(&message);
+                    stats.update(&message);
                 }
             });
         });
@@ -61,14 +62,14 @@ fn bench_driver_update(c: &mut Criterion) {
     group.finish();
 }
 
-/// Per-message hub stats update, as done by the dedicated hub stats subscriber
-/// task (two independent locked updates per message).
+/// Per-message hub stats update, as done inline on every path that publishes to
+/// the hub (the scalar hub accumulator plus the per-message-id map).
 fn bench_hub_update(c: &mut Criterion) {
     init_cli();
     let message = sample_message();
     let rt = Runtime::new().unwrap();
-    let hub_stats = Arc::new(RwLock::new(AccumulatedStatsInner::default()));
-    let hub_messages_stats = Arc::new(RwLock::new(AccumulatedHubMessagesStats::default()));
+    let hub_stats = Arc::new(AtomicAccumulatedStats::default());
+    let hub_messages_stats = Arc::new(AtomicHubMessagesStats::default());
 
     let mut group = c.benchmark_group("stats");
     group.throughput(Throughput::Elements(BATCH));
@@ -76,8 +77,8 @@ fn bench_hub_update(c: &mut Criterion) {
         b.iter(|| {
             rt.block_on(async {
                 for _ in 0..BATCH {
-                    hub_stats.write().await.update(&message);
-                    hub_messages_stats.write().await.update(&message);
+                    hub_stats.update(&message);
+                    hub_messages_stats.update(&message);
                 }
             });
         });
@@ -86,8 +87,7 @@ fn bench_hub_update(c: &mut Criterion) {
 }
 
 /// Full per-message stats cost of routing one message to `outputs` endpoints:
-/// one input driver update, two hub updates, and one update per output driver,
-/// each behind its own lock (matching the real per-driver stats ownership).
+/// one input driver update, two hub updates, and one update per output driver.
 fn bench_route(c: &mut Criterion) {
     init_cli();
     let message = sample_message();
@@ -100,22 +100,21 @@ fn bench_route(c: &mut Criterion) {
             &outputs,
             |b, &outputs| {
                 let rt = Runtime::new().unwrap();
-                let input_stats = Arc::new(RwLock::new(AccumulatedDriverStatsInner::default()));
-                let hub_stats = Arc::new(RwLock::new(AccumulatedStatsInner::default()));
-                let hub_messages_stats =
-                    Arc::new(RwLock::new(AccumulatedHubMessagesStats::default()));
+                let input_stats = Arc::new(AtomicAccumulatedStats::default());
+                let hub_stats = Arc::new(AtomicAccumulatedStats::default());
+                let hub_messages_stats = Arc::new(AtomicHubMessagesStats::default());
                 let output_stats: Vec<_> = (0..outputs)
-                    .map(|_| Arc::new(RwLock::new(AccumulatedDriverStatsInner::default())))
+                    .map(|_| Arc::new(AtomicAccumulatedStats::default()))
                     .collect();
 
                 b.iter(|| {
                     rt.block_on(async {
                         for _ in 0..BATCH {
-                            input_stats.write().await.update_input(&message);
-                            hub_stats.write().await.update(&message);
-                            hub_messages_stats.write().await.update(&message);
+                            input_stats.update(&message);
+                            hub_stats.update(&message);
+                            hub_messages_stats.update(&message);
                             for output in &output_stats {
-                                output.write().await.update_output(&message);
+                                output.update(&message);
                             }
                         }
                     });
