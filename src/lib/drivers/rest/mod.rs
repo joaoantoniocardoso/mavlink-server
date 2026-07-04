@@ -79,9 +79,9 @@ impl Rest {
         let origin: Arc<str> = Arc::from("Ws");
 
         while let Ok(message) = ws_receiver.recv().await {
-            let Ok(content) =
-                json5::from_str::<MAVLinkJSON<mavlink::dialects::ardupilotmega::MavMessage>>(&message)
-            else {
+            let Ok(content) = json5::from_str::<
+                MAVLinkJSON<mavlink::dialects::ardupilotmega::MavMessage>,
+            >(&message) else {
                 warn!("Failed to parse message, not a valid MAVLinkMessage: {message:?}");
                 continue;
             };
@@ -125,7 +125,8 @@ impl Rest {
     ) -> Result<()> {
         let header = mavlink::MavHeader {
             system_id: 255, // default system_id for gcs
-            component_id: mavlink::dialects::ardupilotmega::MavComponent::MAV_COMP_ID_MISSIONPLANNER as u8,
+            component_id: mavlink::dialects::ardupilotmega::MavComponent::MAV_COMP_ID_MISSIONPLANNER
+                as u8,
             ..Default::default()
         };
 
@@ -210,13 +211,17 @@ impl Rest {
             let header = mavlink_json.header.inner;
             let mavlink_message = mavlink_json.message.clone();
 
-            let json_string = parse_query(&mavlink_json);
+            let json_text: std::borrow::Cow<'_, str> = match message.json() {
+                Some(bytes) => std::borrow::Cow::Borrowed(std::str::from_utf8(bytes).unwrap()),
+                None => std::borrow::Cow::Owned(parse_query(&mavlink_json)),
+            };
+
             data::update((mavlink_json.header, mavlink_json.message));
 
             control::update((header, mavlink_message)).await;
 
             if websocket::has_clients().await {
-                websocket::broadcast(uuid, ws::Message::Text(json_string.into())).await;
+                websocket::broadcast(uuid, ws::Message::Text(json_text.into_owned().into())).await;
             }
         }
 
