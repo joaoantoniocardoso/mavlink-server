@@ -2,7 +2,7 @@ use std::{ops::Div, sync::Arc};
 
 use anyhow::{Context, Result, anyhow};
 use indexmap::IndexMap;
-use tokio::sync::{RwLock, broadcast, mpsc};
+use tokio::sync::{RwLock, mpsc};
 use tracing::*;
 
 use crate::{
@@ -24,6 +24,7 @@ pub struct HubActor {
     drivers: IndexMap<DriverUuid, DriverRunner>,
     data_plane: DataPlane,
     sink_count: usize,
+    data_handle: tokio::runtime::Handle,
     component_id: Arc<RwLock<u8>>,
     system_id: Arc<RwLock<u8>>,
     heartbeat_task: tokio::task::JoinHandle<Result<()>>,
@@ -100,10 +101,11 @@ impl HubActor {
         component_id: Arc<RwLock<u8>>,
         system_id: Arc<RwLock<u8>>,
         frequency: Arc<RwLock<f32>>,
+        data_handle: tokio::runtime::Handle,
     ) -> Self {
         let data_plane = DataPlane::new(buffer_size);
 
-        let heartbeat_task = tokio::spawn({
+        let heartbeat_task = data_handle.spawn({
             let data_plane = data_plane.clone();
             let component_id = component_id.clone();
             let system_id = system_id.clone();
@@ -116,6 +118,7 @@ impl HubActor {
             drivers: IndexMap::new(),
             data_plane,
             sink_count: 0,
+            data_handle,
             component_id,
             system_id,
             heartbeat_task,
@@ -128,7 +131,7 @@ impl HubActor {
 
         let data_plane = self.get_sender();
 
-        let task = tokio::spawn({
+        let task = self.data_handle.spawn({
             let driver = driver.clone();
 
             async move {
