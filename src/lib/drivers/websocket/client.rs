@@ -3,7 +3,7 @@ use std::{sync::Arc, time::Duration};
 use anyhow::Result;
 use futures::StreamExt;
 use mavlink_codec::codec::MavlinkCodec;
-use tokio::{sync::broadcast, time};
+use tokio::time;
 use tracing::*;
 use url::Url;
 
