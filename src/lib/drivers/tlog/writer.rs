@@ -1,6 +1,6 @@
 use std::{path::PathBuf, sync::Arc};
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, anyhow};
 use tokio::{
     io::{AsyncWriteExt, BufWriter},
     sync::{RwLock, broadcast},
@@ -8,8 +8,12 @@ use tokio::{
 use tracing::*;
 
 use crate::{
-    callbacks::{Callbacks, MessageCallback},
-    drivers::{Driver, DriverInfo},
+    callbacks::{Callbacks, MessageCallback, SyncMessageFilters},
+    drivers::{
+        Driver, DriverInfo,
+        generic_tasks::{recv_from_sink, spawn_message_observers},
+    },
+    hub::{DataPlane, SinkReceiver, SinkRecvError, register_sink},
     protocol::Protocol,
     stats::{
         accumulated::driver::{
@@ -26,6 +30,7 @@ pub struct TlogWriter {
     name: arc_swap::ArcSwap<String>,
     uuid: DriverUuid,
     on_message_output: Callbacks<Arc<Protocol>>,
+    filter_message_output: SyncMessageFilters<Arc<Protocol>>,
     stats: Arc<AtomicDriverStats>,
 }
 
@@ -80,40 +85,32 @@ impl TlogWriter {
             file_creation_condition,
             uuid: Self::generate_uuid(&path_str),
             on_message_output: Callbacks::default(),
+            filter_message_output: SyncMessageFilters::default(),
             stats: Arc::new(AtomicDriverStats::new(name, &TlogWriterInfo)),
         })
     }
 
-    #[instrument(level = "debug", skip(self, writer, hub_receiver))]
+    #[instrument(level = "debug", skip(self, writer, sink))]
     async fn handle_client(
         &self,
         writer: BufWriter<tokio::fs::File>,
-        mut hub_receiver: broadcast::Receiver<Arc<Protocol>>,
+        mut sink: SinkReceiver,
     ) -> Result<()> {
         let mut writer = writer;
 
         'mainloop: loop {
-            let message = match hub_receiver.recv().await {
-                Ok(message) => message,
-                Err(broadcast::error::RecvError::Closed) => {
-                    error!("Hub channel closed!");
-                    break;
-                }
-                Err(broadcast::error::RecvError::Lagged(count)) => {
-                    warn!("Channel lagged by {count} messages.");
-                    continue;
-                }
+            let Some(message) = recv_from_sink(&mut sink).await else {
+                error!("Hub channel closed!");
+                break;
             };
 
             let timestamp = chrono::Utc::now().timestamp_micros() as u64;
 
             self.stats.update_output(&message);
 
-            for future in self.on_message_output.call_all(message.clone()) {
-                if let Err(error) = future.await {
-                    debug!("Dropping message: on_message_input callback returned error: {error:?}");
-                    continue 'mainloop;
-                }
+            if let Err(error) = self.filter_message_output.apply_all(message.clone()) {
+                debug!("Dropping message: filter_message_output returned error: {error:?}");
+                continue 'mainloop;
             }
 
             let Some(packet) = message.wire() else {
@@ -154,8 +151,10 @@ impl TlogWriter {
 
 #[async_trait::async_trait]
 impl Driver for TlogWriter {
-    #[instrument(level = "debug", skip(self, hub_sender))]
-    async fn run(&self, hub_sender: broadcast::Sender<Arc<Protocol>>) -> Result<()> {
+    #[instrument(level = "debug", skip(self, data_plane))]
+    async fn run(&self, data_plane: DataPlane) -> Result<()> {
+        spawn_message_observers(data_plane.clone(), self.on_message_output.clone(), None);
+
         let mut armed = false;
 
         let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(1));
@@ -175,8 +174,8 @@ impl Driver for TlogWriter {
                     "TlogWriter waiting for its arm condition as {:?}",
                     self.file_creation_condition
                 );
-                let hub_receiver = hub_sender.subscribe();
-                if let Err(error) = wait_for_arm(hub_receiver, expected_origin).await {
+                let sink = register_sink(None).await?;
+                if let Err(error) = wait_for_arm(sink, expected_origin).await {
                     warn!("Failed waiting for arm: {error:?}");
                     continue;
                 }
@@ -198,9 +197,9 @@ impl Driver for TlogWriter {
             debug!("Writing to tlog file: {file:?}");
 
             let writer = tokio::io::BufWriter::with_capacity(1024, file);
-            let hub_receiver = hub_sender.subscribe();
+            let sink = register_sink(None).await?;
 
-            if let Err(error) = TlogWriter::handle_client(self, writer, hub_receiver).await {
+            if let Err(error) = TlogWriter::handle_client(self, writer, sink).await {
                 debug!("TlogWriter client ended with an error: {error:?}");
             }
 
@@ -353,14 +352,23 @@ async fn get_sequence(path: &PathBuf) -> Result<u32> {
 }
 
 async fn wait_for_arm(
-    mut hub_receiver: broadcast::Receiver<Arc<Protocol>>,
+    mut sink: SinkReceiver,
     ExpectedOrigin {
         system_id,
         component_id,
     }: &ExpectedOrigin,
 ) -> Result<()> {
     loop {
-        let message = hub_receiver.recv().await?;
+        let message = match sink.recv().await {
+            Ok(message) => message,
+            Err(SinkRecvError::Lagged(count)) => {
+                warn!("Channel lagged by {count} messages.");
+                continue;
+            }
+            Err(SinkRecvError::Closed) => {
+                return Err(anyhow!("Hub channel closed"));
+            }
+        };
 
         if message.component_id() == Some(*component_id)
             && matches!(check_arm_state(&message), Some(ArmState::Armed))

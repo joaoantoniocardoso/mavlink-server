@@ -10,7 +10,9 @@ use tracing::*;
 use crate::{
     callbacks::{Callbacks, MessageCallback},
     drivers::{
-        Direction, Driver, DriverInfo, generic_tasks::SendReceiveContext, udp::udp_send_task,
+        Direction, Driver, DriverInfo,
+        generic_tasks::{SendReceiveContext, spawn_message_observers},
+        udp::udp_send_task,
     },
     protocol::Protocol,
     stats::{
@@ -80,16 +82,18 @@ impl UdpClient {
 
 #[async_trait::async_trait]
 impl Driver for UdpClient {
-    #[instrument(level = "debug", skip(self, hub_sender))]
-    async fn run(&self, hub_sender: broadcast::Sender<Arc<Protocol>>) -> Result<()> {
+    #[instrument(level = "debug", skip(self, data_plane))]
+    async fn run(&self, data_plane: crate::hub::DataPlane) -> Result<()> {
         let local_addr = "0.0.0.0:0".parse::<SocketAddr>().unwrap();
         let remote_addr = self.remote_addr.parse::<SocketAddr>()?;
 
         let context = SendReceiveContext {
             direction: self.direction,
-            hub_sender,
+            data_plane,
             on_message_output: self.on_message_output.clone(),
             on_message_input: self.on_message_input.clone(),
+            filter_message_output: Default::default(),
+            filter_message_input: Default::default(),
             stats: self.stats.clone(),
         };
 
@@ -187,6 +191,12 @@ where
 {
     let origin: Arc<str> = Arc::from(remote_addr.to_string());
 
+    spawn_message_observers(
+        context.data_plane.clone(),
+        context.on_message_input.clone(),
+        None,
+    );
+
     'mainloop: loop {
         let (packet, remote_addr) = match reader.next().await {
             Some(Ok((Ok(packet), remote_addr))) => (packet, remote_addr),
@@ -223,16 +233,14 @@ where
 
         context.stats.update_input(&message);
 
-        for future in context.on_message_input.call_all(message.clone()) {
-            if let Err(error) = future.await {
-                debug!(origin = ?remote_addr, "Dropping message: on_message_input callback returned error: {error:?}");
-                continue 'mainloop;
-            }
+        if let Err(error) = context.filter_message_input.apply_all(message.clone()) {
+            debug!(origin = ?remote_addr, "Dropping message: filter_message_input returned error: {error:?}");
+            continue 'mainloop;
         }
 
         crate::hub::accumulate_hub_message(&message);
 
-        if let Err(send_error) = context.hub_sender.send(message) {
+        if let Err(send_error) = context.data_plane.publish(message) {
             error!(origin = ?remote_addr, "Failed to send message to hub: {send_error:?}");
             continue;
         }

@@ -3,20 +3,52 @@ use std::sync::Arc;
 use anyhow::{Result, anyhow};
 use futures::{Sink, SinkExt, Stream, StreamExt};
 use mavlink_codec::{Packet, error::DecoderError};
-use tokio::sync::broadcast;
 use tracing::*;
 
 use crate::{
-    callbacks::Callbacks, protocol::Protocol, stats::accumulated::driver::AtomicDriverStats,
+    callbacks::{Callbacks, SyncMessageFilters},
+    hub::dataplane::SinkReceiver,
+    hub::{DataPlane, register_sink},
+    protocol::Protocol,
+    stats::accumulated::driver::AtomicDriverStats,
 };
 
 #[derive(Clone)]
 pub struct SendReceiveContext {
     pub direction: crate::drivers::Direction,
-    pub hub_sender: broadcast::Sender<Arc<Protocol>>,
+    pub data_plane: DataPlane,
     pub on_message_output: Callbacks<Arc<Protocol>>,
     pub on_message_input: Callbacks<Arc<Protocol>>,
+    pub filter_message_output: SyncMessageFilters<Arc<Protocol>>,
+    pub filter_message_input: SyncMessageFilters<Arc<Protocol>>,
     pub stats: Arc<AtomicDriverStats>,
+}
+
+pub fn spawn_message_observers(
+    data_plane: DataPlane,
+    observers: Callbacks<Arc<Protocol>>,
+    loopback_origin: Option<Arc<str>>,
+) {
+    if observers.is_empty() {
+        return;
+    }
+
+    tokio::spawn(async move {
+        let mut sink = match loopback_origin {
+            Some(origin) => data_plane.register_sink_with_origin(origin),
+            None => data_plane.register_sink(),
+        };
+
+        loop {
+            let Some(message) = sink.recv_next().await else {
+                break;
+            };
+
+            for future in observers.call_all(message) {
+                let _ = future.await;
+            }
+        }
+    });
 }
 
 #[instrument(level = "debug", skip(writer, reader, context))]
@@ -68,6 +100,12 @@ where
 {
     let origin: Arc<str> = Arc::from(identifier);
 
+    spawn_message_observers(
+        context.data_plane.clone(),
+        context.on_message_input.clone(),
+        None,
+    );
+
     'mainloop: loop {
         let packet = match reader.next().await {
             Some(Ok(Ok(packet))) => packet,
@@ -104,16 +142,14 @@ where
 
         context.stats.update_input(&message);
 
-        for future in context.on_message_input.call_all(message.clone()) {
-            if let Err(error) = future.await {
-                debug!("Dropping message: on_message_input callback returned error: {error:?}");
-                continue 'mainloop;
-            }
+        if let Err(error) = context.filter_message_input.apply_all(message.clone()) {
+            debug!("Dropping message: filter_message_input returned error: {error:?}");
+            continue 'mainloop;
         }
 
         crate::hub::accumulate_hub_message(&message);
 
-        if let Err(send_error) = context.hub_sender.send(message) {
+        if let Err(send_error) = context.data_plane.publish(message) {
             error!("Failed to send message to hub: {send_error:?}");
             continue;
         }
@@ -136,32 +172,27 @@ pub async fn default_send_task<S>(
 where
     S: Sink<Packet, Error = std::io::Error> + std::marker::Unpin,
 {
-    let mut hub_receiver = context.hub_sender.subscribe();
+    let origin = Arc::from(identifier);
+
+    spawn_message_observers(
+        context.data_plane.clone(),
+        context.on_message_output.clone(),
+        Some(Arc::clone(&origin)),
+    );
+
+    let mut sink = register_sink(Some(origin)).await?;
 
     'mainloop: loop {
-        let message = match hub_receiver.recv().await {
-            Ok(message) => message,
-            Err(broadcast::error::RecvError::Closed) => {
-                error!("Hub channel closed!");
-                break;
-            }
-            Err(broadcast::error::RecvError::Lagged(count)) => {
-                warn!("Channel lagged by {count} messages.");
-                continue;
-            }
+        let Some(message) = sink.recv_next().await else {
+            error!("Hub channel closed!");
+            break;
         };
-
-        if message.origin.as_ref().eq(identifier) {
-            continue; // Don't do loopback
-        }
 
         context.stats.update_output(&message);
 
-        for future in context.on_message_output.call_all(message.clone()) {
-            if let Err(error) = future.await {
-                debug!("Dropping message: on_message_output callback returned error: {error:?}");
-                continue 'mainloop;
-            }
+        if let Err(error) = context.filter_message_output.apply_all(message.clone()) {
+            debug!("Dropping message: filter_message_output returned error: {error:?}");
+            continue 'mainloop;
         }
 
         let Some(packet) = message.wire() else {
@@ -180,4 +211,8 @@ where
     debug!("Driver sender task stopped!");
 
     Ok(())
+}
+
+pub async fn recv_from_sink(sink: &mut SinkReceiver) -> Option<Arc<Protocol>> {
+    sink.recv_next().await
 }

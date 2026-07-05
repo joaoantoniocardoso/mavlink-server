@@ -89,17 +89,19 @@ impl WebSocketClientDriver {
 
 #[async_trait::async_trait]
 impl Driver for WebSocketClientDriver {
-    #[instrument(level = "debug", skip(self, hub_sender))]
-    async fn run(&self, hub_sender: broadcast::Sender<Arc<Protocol>>) -> Result<()> {
+    #[instrument(level = "debug", skip(self, data_plane))]
+    async fn run(&self, data_plane: crate::hub::DataPlane) -> Result<()> {
         let server_addr = &self.remote_addr.to_string();
         let server_scheme = &self.scheme;
         let server_url = &format!("{server_scheme}://{server_addr}/");
 
         let context = SendReceiveContext {
             direction: self.direction,
-            hub_sender,
+            data_plane,
             on_message_output: self.on_message_output.clone(),
             on_message_input: self.on_message_input.clone(),
+            filter_message_output: Default::default(),
+            filter_message_input: Default::default(),
             stats: self.stats.clone(),
         };
 

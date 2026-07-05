@@ -117,15 +117,17 @@ impl WebSocketServerDriver {
 
 #[async_trait::async_trait]
 impl Driver for WebSocketServerDriver {
-    #[instrument(level = "debug", skip(self, hub_sender))]
-    async fn run(&self, hub_sender: broadcast::Sender<Arc<Protocol>>) -> Result<()> {
+    #[instrument(level = "debug", skip(self, data_plane))]
+    async fn run(&self, data_plane: crate::hub::DataPlane) -> Result<()> {
         let local_addr = self.local_addr.parse::<SocketAddr>()?;
 
         let context = SendReceiveContext {
             direction: self.direction,
-            hub_sender,
+            data_plane,
             on_message_output: self.on_message_output.clone(),
             on_message_input: self.on_message_input.clone(),
+            filter_message_output: Default::default(),
+            filter_message_input: Default::default(),
             stats: self.stats.clone(),
         };
 

@@ -1,19 +1,19 @@
-use std::net::SocketAddr;
+use std::{net::SocketAddr, sync::Arc};
 
 use anyhow::Result;
 use futures::{Sink, SinkExt};
 use mavlink_codec::Packet;
-use tokio::sync::broadcast;
 use tracing::*;
 
-use super::generic_tasks::SendReceiveContext;
+use super::generic_tasks::{SendReceiveContext, spawn_message_observers};
+use crate::hub::register_sink;
 
 pub mod client;
 pub mod server;
 
 /// Receives messages from the HUB Channel and sends them to a Sink
 #[instrument(level = "debug", skip(writer, context))]
-async fn udp_send_task<S>(
+pub(crate) async fn udp_send_task<S>(
     writer: &mut S,
     remote_addr: &SocketAddr,
     context: &SendReceiveContext,
@@ -21,35 +21,30 @@ async fn udp_send_task<S>(
 where
     S: Sink<(Packet, SocketAddr), Error = std::io::Error> + std::marker::Unpin,
 {
-    let mut hub_receiver = context.hub_sender.subscribe();
+    let origin = Arc::from(remote_addr.to_string());
+
+    spawn_message_observers(
+        context.data_plane.clone(),
+        context.on_message_output.clone(),
+        Some(Arc::clone(&origin)),
+    );
+
+    let mut sink = register_sink(Some(origin)).await?;
 
     'mainloop: loop {
-        let message = match hub_receiver.recv().await {
-            Ok(message) => message,
-            Err(broadcast::error::RecvError::Closed) => {
-                error!("Hub channel closed!");
-                break;
-            }
-            Err(broadcast::error::RecvError::Lagged(count)) => {
-                warn!("Channel lagged by {count} messages.");
-                continue;
-            }
+        let Some(message) = sink.recv_next().await else {
+            error!("Hub channel closed!");
+            break;
         };
-
-        if message.origin.as_ref().eq(&remote_addr.to_string()) {
-            continue; // Don't do loopback
-        }
 
         if context.direction.can_send() {
             context.stats.update_output(&message);
 
-            for future in context.on_message_output.call_all(message.clone()) {
-                if let Err(error) = future.await {
-                    debug!(
-                        client = ?remote_addr, "Dropping message: on_message_output callback returned error: {error:?}"
-                    );
-                    continue 'mainloop;
-                }
+            if let Err(error) = context.filter_message_output.apply_all(message.clone()) {
+                debug!(
+                    client = ?remote_addr, "Dropping message: filter_message_output returned error: {error:?}"
+                );
+                continue 'mainloop;
             }
 
             let Some(packet) = message.wire() else {

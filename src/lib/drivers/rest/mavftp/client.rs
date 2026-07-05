@@ -12,7 +12,7 @@ use lazy_static::lazy_static;
 use tokio::sync::{Mutex, RwLock, broadcast};
 use tracing::*;
 
-use crate::protocol::Protocol;
+use crate::{hub::dataplane::SinkReceiver, protocol::Protocol};
 
 use super::{
     FtpClientError,
@@ -404,7 +404,7 @@ async fn run_burst_cycle(
     system_id: u8,
     component_id: u8,
     session: u8,
-    hub_receiver: &mut broadcast::Receiver<Arc<Protocol>>,
+    hub_receiver: &mut SinkReceiver,
     state: &mut BurstReadState,
     retries: &mut u32,
     progress: Option<&AtomicU64>,

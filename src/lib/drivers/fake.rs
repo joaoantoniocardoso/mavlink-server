@@ -10,7 +10,11 @@ use tracing::*;
 
 use crate::{
     callbacks::{Callbacks, MessageCallback},
-    drivers::{Driver, DriverInfo},
+    drivers::{
+        Driver, DriverInfo,
+        generic_tasks::{recv_from_sink, spawn_message_observers},
+    },
+    hub::{DataPlane, register_sink},
     protocol::Protocol,
     stats::{
         accumulated::driver::{
@@ -89,30 +93,18 @@ impl FakeSinkBuilder {
 
 #[async_trait::async_trait]
 impl Driver for FakeSink {
-    async fn run(&self, hub_sender: broadcast::Sender<Arc<Protocol>>) -> Result<()> {
-        let mut hub_receiver = hub_sender.subscribe();
+    async fn run(&self, data_plane: DataPlane) -> Result<()> {
+        spawn_message_observers(data_plane.clone(), self.on_message_input.clone(), None);
+
+        let mut sink = register_sink(None).await?;
 
         'mainloop: loop {
-            let message = match hub_receiver.recv().await {
-                Ok(message) => message,
-                Err(broadcast::error::RecvError::Closed) => {
-                    error!("Hub channel closed!");
-                    break;
-                }
-                Err(broadcast::error::RecvError::Lagged(count)) => {
-                    warn!("Channel lagged by {count} messages.");
-                    continue;
-                }
+            let Some(message) = recv_from_sink(&mut sink).await else {
+                error!("Hub channel closed!");
+                break;
             };
 
             self.stats.update_input(&message);
-
-            for future in self.on_message_input.call_all(message.clone()) {
-                if let Err(error) = future.await {
-                    debug!("Dropping message: on_message_input callback returned error: {error:?}");
-                    continue 'mainloop;
-                }
-            }
 
             if self.print_as_bytes {
                 println!("Message received: {message:?}");
@@ -315,7 +307,9 @@ impl FakeSourceBuilder {
 
 #[async_trait::async_trait]
 impl Driver for FakeSource {
-    async fn run(&self, hub_sender: broadcast::Sender<Arc<Protocol>>) -> Result<()> {
+    async fn run(&self, data_plane: DataPlane) -> Result<()> {
+        spawn_message_observers(data_plane.clone(), self.on_message_output.clone(), None);
+
         let (tx, mut rx) = tokio::sync::mpsc::channel(100);
 
         let generator_task = std::thread::Builder::new()
@@ -383,16 +377,9 @@ impl Driver for FakeSource {
 
             self.stats.update_output(&message);
 
-            for future in self.on_message_output.call_all(message.clone()) {
-                if let Err(error) = future.await {
-                    debug!("Dropping message: on_message_input callback returned error: {error:?}");
-                    continue 'mainloop;
-                }
-            }
-
             crate::hub::accumulate_hub_message(&message);
 
-            if let Err(error) = hub_sender.send(message) {
+            if let Err(error) = data_plane.publish(message) {
                 error!("Failed to send message to hub: {error:?}");
             }
         }
@@ -516,7 +503,7 @@ mod test {
             "--allow-no-endpoints",
         ]));
 
-        let (hub_sender, _) = broadcast::channel(10000);
+        let data_plane = crate::hub::data_plane().await?;
 
         let number_of_messages = 800;
         let message_period = tokio::time::Duration::from_millis(1);
@@ -542,9 +529,9 @@ mod test {
             })
             .build();
         let sink_task = tokio::spawn({
-            let hub_sender = hub_sender.clone();
+            let data_plane = data_plane.clone();
 
-            async move { sink.run(hub_sender).await }
+            async move { sink.run(data_plane).await }
         });
 
         // FakeSource and task
@@ -564,9 +551,9 @@ mod test {
             })
             .build();
         let source_task = tokio::spawn({
-            let hub_sender = hub_sender.clone();
+            let data_plane = data_plane.clone();
 
-            async move { source.run(hub_sender).await }
+            async move { source.run(data_plane).await }
         });
 
         // Monitoring task to wait the

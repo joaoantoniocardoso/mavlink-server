@@ -12,7 +12,11 @@ use tracing::*;
 
 use crate::{
     callbacks::{Callbacks, MessageCallback},
-    drivers::{Driver, DriverInfo, generic_tasks::SendReceiveContext},
+    drivers::{
+        Driver, DriverInfo,
+        generic_tasks::{SendReceiveContext, spawn_message_observers},
+    },
+    hub::{DataPlane, register_sink},
     mavlink_json::MAVLinkJSON,
     protocol::Protocol,
     stats::{
@@ -96,16 +100,14 @@ impl Rest {
 
             context.stats.update_input(&bus_message);
 
-            for future in context.on_message_input.call_all(bus_message.clone()) {
-                if let Err(error) = future.await {
-                    debug!("Dropping message: on_message_input callback returned error: {error:?}");
-                    continue;
-                }
+            if let Err(error) = context.filter_message_input.apply_all(bus_message.clone()) {
+                debug!("Dropping message: filter_message_input returned error: {error:?}");
+                continue;
             }
 
             crate::hub::accumulate_hub_message(&bus_message);
 
-            if let Err(error) = context.hub_sender.send(bus_message) {
+            if let Err(error) = context.data_plane.publish(bus_message) {
                 error!("Failed to send message to hub: {error:?}");
                 continue;
             }
@@ -143,16 +145,14 @@ impl Rest {
 
             context.stats.update_input(&bus_message);
 
-            for future in context.on_message_input.call_all(bus_message.clone()) {
-                if let Err(error) = future.await {
-                    debug!("Dropping message: on_message_input callback returned error: {error:?}");
-                    continue;
-                }
+            if let Err(error) = context.filter_message_input.apply_all(bus_message.clone()) {
+                debug!("Dropping message: filter_message_input returned error: {error:?}");
+                continue;
             }
 
             crate::hub::accumulate_hub_message(&bus_message);
 
-            if let Err(error) = context.hub_sender.send(bus_message) {
+            if let Err(error) = context.data_plane.publish(bus_message) {
                 error!("Failed to send message to hub: {error:?}");
                 continue;
             }
@@ -167,62 +167,57 @@ impl Rest {
 
     #[instrument(level = "debug", skip_all)]
     async fn send_task(context: &SendReceiveContext) -> Result<()> {
-        let mut hub_receiver = context.hub_sender.subscribe();
+        let mut sink = register_sink(Some(Arc::from("Ws"))).await?;
+
+        spawn_message_observers(
+            context.data_plane.clone(),
+            context.on_message_output.clone(),
+            Some(Arc::from("Ws")),
+        );
 
         let origin = "Ws";
         let uuid = uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_URL, origin.as_bytes());
 
         'mainloop: loop {
-            let message = match hub_receiver.recv().await {
-                Ok(message) => message,
-                Err(broadcast::error::RecvError::Closed) => {
-                    error!("Hub channel closed!");
-                    break;
-                }
-                Err(broadcast::error::RecvError::Lagged(count)) => {
-                    warn!("Channel lagged by {count} messages.");
-                    continue;
-                }
+            let Some(message) = sink.recv_next().await else {
+                error!("Hub channel closed!");
+                break;
             };
-
-            if message.origin.as_ref().eq(origin) {
-                continue; // Don't do loopback
-            }
 
             context.stats.update_output(&message);
 
-            for future in context.on_message_output.call_all(message.clone()) {
-                if let Err(error) = future.await {
-                    debug!(
-                        "Dropping message: on_message_output callback returned error: {error:?}"
-                    );
-                    continue 'mainloop;
+            if let Err(error) = context.filter_message_output.apply_all(message.clone()) {
+                debug!("Dropping message: filter_message_output returned error: {error:?}");
+                continue 'mainloop;
+            }
+
+            let message = message.clone();
+            tokio::spawn(async move {
+                let Ok(mavlink_json) = message
+                    .to_mavlink_json::<mavlink::dialects::ardupilotmega::MavMessage>()
+                    .await
+                    .inspect_err(|error| debug!("Failed converting message to json: {error:?}"))
+                else {
+                    return;
+                };
+
+                let header = mavlink_json.header.inner;
+                let mavlink_message = mavlink_json.message.clone();
+
+                let json_text: std::borrow::Cow<'_, str> = match message.json() {
+                    Some(bytes) => std::borrow::Cow::Borrowed(std::str::from_utf8(bytes).unwrap()),
+                    None => std::borrow::Cow::Owned(parse_query(&mavlink_json)),
+                };
+
+                data::update((mavlink_json.header, mavlink_json.message));
+
+                control::update((header, mavlink_message)).await;
+
+                if websocket::has_clients().await {
+                    websocket::broadcast(uuid, ws::Message::Text(json_text.into_owned().into()))
+                        .await;
                 }
-            }
-
-            let Ok(mavlink_json) = message
-                .to_mavlink_json::<mavlink::dialects::ardupilotmega::MavMessage>()
-                .await
-                .inspect_err(|error| debug!("Failed converting message to json: {error:?}"))
-            else {
-                continue;
-            };
-
-            let header = mavlink_json.header.inner;
-            let mavlink_message = mavlink_json.message.clone();
-
-            let json_text: std::borrow::Cow<'_, str> = match message.json() {
-                Some(bytes) => std::borrow::Cow::Borrowed(std::str::from_utf8(bytes).unwrap()),
-                None => std::borrow::Cow::Owned(parse_query(&mavlink_json)),
-            };
-
-            data::update((mavlink_json.header, mavlink_json.message));
-
-            control::update((header, mavlink_message)).await;
-
-            if websocket::has_clients().await {
-                websocket::broadcast(uuid, ws::Message::Text(json_text.into_owned().into())).await;
-            }
+            });
         }
 
         debug!("Driver sender task stopped!");
@@ -239,15 +234,23 @@ pub fn parse_query<T: serde::ser::Serialize>(message: &T) -> String {
 
 #[async_trait::async_trait]
 impl Driver for Rest {
-    #[instrument(level = "debug", skip(self, hub_sender))]
-    async fn run(&self, hub_sender: broadcast::Sender<Arc<Protocol>>) -> Result<()> {
+    #[instrument(level = "debug", skip(self, data_plane))]
+    async fn run(&self, data_plane: DataPlane) -> Result<()> {
         let context = SendReceiveContext {
             direction: crate::drivers::Direction::Both,
-            hub_sender,
+            data_plane,
             on_message_output: self.on_message_output.clone(),
             on_message_input: self.on_message_input.clone(),
+            filter_message_output: Default::default(),
+            filter_message_input: Default::default(),
             stats: self.stats.clone(),
         };
+
+        spawn_message_observers(
+            context.data_plane.clone(),
+            context.on_message_input.clone(),
+            None,
+        );
 
         let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(1));
         let mut first = true;

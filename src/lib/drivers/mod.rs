@@ -14,7 +14,6 @@ use anyhow::{Context, Result};
 
 use regex::Regex;
 use strum_macros;
-use tokio::sync::broadcast;
 use tracing::*;
 use url::Url;
 
@@ -74,7 +73,7 @@ pub struct DriverDescriptionLegacy {
 
 #[async_trait::async_trait]
 pub trait Driver: Send + Sync + AccumulatedDriverStatsProvider + std::fmt::Debug {
-    async fn run(&self, hub_sender: broadcast::Sender<Arc<Protocol>>) -> Result<()>;
+    async fn run(&self, data_plane: crate::hub::DataPlane) -> Result<()>;
 
     fn info(&self) -> Box<dyn DriverInfo>;
 
@@ -293,8 +292,9 @@ mod tests {
 
     use super::*;
     use crate::{
-        callbacks::{Callbacks, MessageCallback},
+        callbacks::{Callbacks, MessageCallback, SyncMessageFilters},
         cli,
+        hub::DataPlane,
         stats::{accumulated::driver::AccumulatedDriverStats, driver::DriverUuid},
     };
 
@@ -316,6 +316,7 @@ mod tests {
         name: arc_swap::ArcSwap<String>,
         uuid: DriverUuid,
         on_message_output: Callbacks<Arc<Protocol>>,
+        filter_message_output: SyncMessageFilters<Arc<Protocol>>,
         stats: Arc<RwLock<AccumulatedDriverStats>>,
     }
 
@@ -327,6 +328,7 @@ mod tests {
                 name: arc_swap::ArcSwap::new(name.clone()),
                 uuid: Self::generate_uuid(&name),
                 on_message_output: Callbacks::default(),
+                filter_message_output: SyncMessageFilters::default(),
                 stats: Arc::new(RwLock::new(AccumulatedDriverStats::new(
                     name,
                     &ExampleDriverInfo,
@@ -349,35 +351,38 @@ mod tests {
             self.0.on_message_output.add_callback(callback.into_boxed());
             self
         }
+
+        pub fn filter_message_output<F>(self, filter: F) -> Self
+        where
+            F: Fn(Arc<Protocol>) -> Result<()> + Send + Sync + 'static,
+        {
+            self.0.filter_message_output.add_filter(filter);
+            self
+        }
     }
 
     #[async_trait::async_trait]
     impl Driver for ExampleDriver {
-        async fn run(&self, hub_sender: broadcast::Sender<Arc<Protocol>>) -> Result<()> {
-            let mut hub_receiver = hub_sender.subscribe();
+        async fn run(&self, data_plane: crate::hub::DataPlane) -> Result<()> {
+            crate::drivers::generic_tasks::spawn_message_observers(
+                data_plane.clone(),
+                self.on_message_output.clone(),
+                None,
+            );
+
+            let mut sink = crate::hub::register_sink(None).await?;
 
             'mainloop: loop {
-                let message = match hub_receiver.recv().await {
-                    Ok(message) => message,
-                    Err(broadcast::error::RecvError::Closed) => {
-                        error!("Hub channel closed!");
-                        break;
-                    }
-                    Err(broadcast::error::RecvError::Lagged(count)) => {
-                        warn!("Channel lagged by {count} messages.");
-                        continue;
-                    }
+                let Some(message) = sink.recv_next().await else {
+                    error!("Hub channel closed!");
+                    break;
                 };
 
                 self.stats.write().await.stats.update_output(&message);
 
-                for future in self.on_message_output.call_all(message.clone()) {
-                    if let Err(error) = future.await {
-                        debug!(
-                            "Dropping message: on_message_output callback returned error: {error:?}"
-                        );
-                        continue 'mainloop;
-                    }
+                if let Err(error) = self.filter_message_output.apply_all(message.clone()) {
+                    debug!("Dropping message: filter_message_output returned error: {error:?}");
+                    continue 'mainloop;
                 }
 
                 trace!("Message sent: {message:?}");
@@ -442,7 +447,7 @@ mod tests {
             "--mavlink-heartbeat-frequency=0.001",
         ]));
 
-        let (sender, _receiver) = tokio::sync::broadcast::channel(1);
+        let data_plane = crate::hub::data_plane().await?;
 
         let called = Arc::new(RwLock::new(false));
         let driver = ExampleDriver::new("test")
@@ -454,20 +459,22 @@ mod tests {
                     async move {
                         *called.write().await = true;
 
-                        Err(anyhow!("Finished from callback"))
+                        Ok(())
                     }
                 }
             })
             .build();
 
         let receiver_task_handle = tokio::spawn({
-            let sender = sender.clone();
+            let data_plane = data_plane.clone();
 
-            async move { driver.run(sender).await }
+            async move { driver.run(data_plane).await }
         });
 
+        tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+
         let sender_task_handle = tokio::spawn({
-            let sender = sender.clone();
+            let data_plane = data_plane.clone();
 
             let header = mavlink::MavHeader::default();
             let message = mavlink::dialects::ardupilotmega::MavMessage::default_message_from_id(
@@ -476,8 +483,8 @@ mod tests {
             .unwrap();
 
             async move {
-                sender
-                    .send(Arc::new(Protocol::from_mavlink_raw(
+                data_plane
+                    .publish(Arc::new(Protocol::from_mavlink_raw(
                         header, &message, "test",
                     )))
                     .unwrap();

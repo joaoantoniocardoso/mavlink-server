@@ -4,10 +4,13 @@ use std::sync::{
 };
 
 use anyhow::{Result, anyhow};
-use tokio::sync::broadcast;
 use tracing::*;
 
-use crate::{hub, protocol::Protocol};
+use crate::{
+    hub,
+    hub::dataplane::{SinkReceiver, SinkRecvError},
+    protocol::Protocol,
+};
 
 use super::protocol::{FtpOpcode, FtpPayload};
 
@@ -20,9 +23,8 @@ pub(super) fn new_request(opcode: FtpOpcode) -> FtpPayload {
 }
 
 #[instrument(level = "debug")]
-pub(super) async fn subscribe() -> Result<broadcast::Receiver<Arc<Protocol>>> {
-    let sender = hub::sender().await?;
-    Ok(sender.subscribe())
+pub(super) async fn subscribe() -> Result<SinkReceiver> {
+    hub::register_sink(None).await
 }
 
 #[instrument(
@@ -40,7 +42,7 @@ pub(super) fn send_ftp_message(target_system: u8, target_component: u8, payload:
 
 #[instrument(level = "debug", skip(receiver))]
 pub(super) async fn recv_ftp(
-    receiver: &mut broadcast::Receiver<Arc<Protocol>>,
+    receiver: &mut SinkReceiver,
     target_system: u8,
     target_component: u8,
     expected_seq: Option<u16>,
@@ -75,11 +77,10 @@ pub(super) async fn recv_ftp(
                     return Ok(resp);
                 }
             }
-            Err(broadcast::error::RecvError::Lagged(count)) => {
+            Err(SinkRecvError::Lagged(count)) => {
                 warn!("FTP hub receiver lagged by {count} messages");
-                continue;
             }
-            Err(broadcast::error::RecvError::Closed) => {
+            Err(SinkRecvError::Closed) => {
                 return Err(anyhow!("Hub broadcast channel closed"));
             }
         }

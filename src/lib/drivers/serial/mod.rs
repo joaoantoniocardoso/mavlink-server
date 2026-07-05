@@ -77,15 +77,17 @@ impl Serial {
 
 #[async_trait::async_trait]
 impl Driver for Serial {
-    #[instrument(level = "debug", skip(self, hub_sender))]
-    async fn run(&self, hub_sender: broadcast::Sender<Arc<Protocol>>) -> Result<()> {
+    #[instrument(level = "debug", skip(self, data_plane))]
+    async fn run(&self, data_plane: crate::hub::DataPlane) -> Result<()> {
         let port_name = self.port_name.clone();
 
         let context = SendReceiveContext {
             direction: crate::drivers::Direction::Both,
-            hub_sender,
+            data_plane,
             on_message_output: self.on_message_output.clone(),
             on_message_input: self.on_message_input.clone(),
+            filter_message_output: Default::default(),
+            filter_message_input: Default::default(),
             stats: self.stats.clone(),
         };
 

@@ -8,7 +8,12 @@ use zenoh;
 
 use crate::{
     callbacks::{Callbacks, MessageCallback},
-    drivers::{Driver, DriverInfo, generic_tasks::SendReceiveContext, zenoh::session},
+    drivers::{
+        Driver, DriverInfo,
+        generic_tasks::{SendReceiveContext, spawn_message_observers},
+        zenoh::session,
+    },
+    hub::{DataPlane, register_sink},
     mavlink_json::MAVLinkJSON,
     protocol::Protocol,
     stats::{
@@ -88,6 +93,12 @@ impl Zenoh {
 
         let origin: Arc<str> = Arc::from(DRIVER_IDENTIFIER);
 
+        spawn_message_observers(
+            context.data_plane.clone(),
+            context.on_message_input.clone(),
+            None,
+        );
+
         'mainloop: loop {
             let sample = match subscriber.recv_async().await {
                 Ok(sample) => sample,
@@ -130,16 +141,14 @@ impl Zenoh {
 
             context.stats.update_input(&bus_message);
 
-            for future in context.on_message_input.call_all(bus_message.clone()) {
-                if let Err(error) = future.await {
-                    debug!("Dropping message: on_message_input callback returned error: {error:?}");
-                    continue 'mainloop;
-                }
+            if let Err(error) = context.filter_message_input.apply_all(bus_message.clone()) {
+                debug!("Dropping message: filter_message_input returned error: {error:?}");
+                continue 'mainloop;
             }
 
             crate::hub::accumulate_hub_message(&bus_message);
 
-            if let Err(error) = context.hub_sender.send(bus_message) {
+            if let Err(error) = context.data_plane.publish(bus_message) {
                 error!("Failed to send message to hub: {error:?}");
                 continue;
             }
@@ -154,48 +163,35 @@ impl Zenoh {
 
     #[instrument(level = "debug", skip_all)]
     async fn send_task(context: &SendReceiveContext, session: Arc<zenoh::Session>) -> Result<()> {
-        let mut hub_receiver = context.hub_sender.subscribe();
+        let mut sink = register_sink(Some(Arc::from(DRIVER_IDENTIFIER))).await?;
         let mut publishers = HashMap::new();
 
-        'mainloop: loop {
-            let message = match hub_receiver.recv().await {
-                Ok(message) => message,
-                Err(broadcast::error::RecvError::Closed) => {
-                    error!("Hub channel closed!");
-                    break;
-                }
-                Err(broadcast::error::RecvError::Lagged(count)) => {
-                    warn!("Channel lagged by {count} messages.");
-                    continue;
-                }
-            };
+        spawn_message_observers(
+            context.data_plane.clone(),
+            context.on_message_output.clone(),
+            Some(Arc::from(DRIVER_IDENTIFIER)),
+        );
 
-            if message.origin.as_ref().eq(DRIVER_IDENTIFIER) {
-                continue; // Don't do loopback
-            }
+        'mainloop: loop {
+            let Some(message) = sink.recv_next().await else {
+                error!("Hub channel closed!");
+                break;
+            };
 
             context.stats.update_output(&message);
 
-            for future in context.on_message_output.call_all(message.clone()) {
-                if let Err(error) = future.await {
-                    debug!(
-                        "Dropping message: on_message_output callback returned error: {error:?}"
-                    );
-                    continue 'mainloop;
-                }
+            if let Err(error) = context.filter_message_output.apply_all(message.clone()) {
+                debug!("Dropping message: filter_message_output returned error: {error:?}");
+                continue 'mainloop;
             }
 
             use mavlink_codec::mavlink_json::{generated, rt};
 
-            // Per-field fan-out needs the descriptor + wire frame; a frame we cannot transcode to
-            // the wire (unknown JSON type) has nothing to publish here, so skip it.
             let Some(packet) = message.wire() else {
                 debug!("Skipping message with no wire representation");
                 continue;
             };
 
-            // Resolve the descriptor for this frame; unknown ids are not in the
-            // compiled dialect, so skip (same as the old typed path failing).
             let Some(desc) = generated::descriptor(packet.message_id()) else {
                 debug!(
                     "Skipping message id {}: not in dialect",
@@ -205,7 +201,6 @@ impl Zenoh {
             };
             let message_name = desc.name;
 
-            // One pass: whole-message JSON + byte ranges of every field's value.
             let mut blob: Vec<u8> = Vec::with_capacity(256);
             let mut ranges = vec![(0u32, 0u32); desc.fields.len()];
             rt::to_json_indexed(packet, desc, &mut blob, &mut ranges);
@@ -223,7 +218,6 @@ impl Zenoh {
             );
             Self::publish_json(&session, &mut publishers, &message_topic_name, json_string).await;
 
-            // Per-field: slice each value straight out of the single blob (no re-serialize).
             for (field, &(start, end)) in desc.fields.iter().zip(ranges.iter()) {
                 let field_topic_name = format!("{message_topic_name}/{}", field.name);
                 let field_json = std::str::from_utf8(&blob[start as usize..end as usize]).unwrap();
@@ -288,13 +282,15 @@ impl Zenoh {
 
 #[async_trait::async_trait]
 impl Driver for Zenoh {
-    #[instrument(level = "debug", skip(self, hub_sender))]
-    async fn run(&self, hub_sender: broadcast::Sender<Arc<Protocol>>) -> Result<()> {
+    #[instrument(level = "debug", skip(self, data_plane))]
+    async fn run(&self, data_plane: DataPlane) -> Result<()> {
         let context = SendReceiveContext {
             direction: crate::drivers::Direction::Both,
-            hub_sender,
+            data_plane,
             on_message_output: self.on_message_output.clone(),
             on_message_input: self.on_message_input.clone(),
+            filter_message_output: Default::default(),
+            filter_message_input: Default::default(),
             stats: self.stats.clone(),
         };
 

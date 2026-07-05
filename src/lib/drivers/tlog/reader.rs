@@ -8,8 +8,9 @@ use tokio::sync::broadcast;
 use tracing::*;
 
 use crate::{
-    callbacks::{Callbacks, MessageCallback},
-    drivers::{Driver, DriverInfo},
+    callbacks::{Callbacks, MessageCallback, SyncMessageFilters},
+    drivers::{Driver, DriverInfo, generic_tasks::spawn_message_observers},
+    hub::DataPlane,
     protocol::Protocol,
     stats::{
         accumulated::driver::{
@@ -25,6 +26,7 @@ pub struct TlogReader {
     name: arc_swap::ArcSwap<String>,
     uuid: DriverUuid,
     on_message_input: Callbacks<Arc<Protocol>>,
+    filter_message_input: SyncMessageFilters<Arc<Protocol>>,
     stats: Arc<AtomicDriverStats>,
 }
 
@@ -61,17 +63,20 @@ impl TlogReader {
             name: arc_swap::ArcSwap::new(name.clone()),
             uuid: Self::generate_uuid(&path_str),
             on_message_input: Callbacks::default(),
+            filter_message_input: SyncMessageFilters::default(),
             stats: Arc::new(AtomicDriverStats::new(name, &TlogReaderInfo)),
         })
     }
 
-    #[instrument(level = "debug", skip(self, reader, hub_sender))]
+    #[instrument(level = "debug", skip(self, reader, data_plane))]
     async fn handle_file(
         &self,
         reader: tokio::io::BufReader<tokio::fs::File>,
-        hub_sender: broadcast::Sender<Arc<Protocol>>,
+        data_plane: DataPlane,
     ) -> Result<()> {
         let origin: Arc<str> = Arc::from(self.path.as_path().display().to_string());
+
+        spawn_message_observers(data_plane.clone(), self.on_message_input.clone(), None);
 
         let mut reader = mavlink::async_peek_reader::AsyncPeekReader::new(reader);
         let mut timestamp_bytes = [0u8; 8];
@@ -129,16 +134,14 @@ impl TlogReader {
 
             self.stats.update_input(&message);
 
-            for future in self.on_message_input.call_all(message.clone()) {
-                if let Err(error) = future.await {
-                    debug!("Dropping message: on_message_input callback returned error: {error:?}");
-                    continue 'mainloop;
-                }
+            if let Err(error) = self.filter_message_input.apply_all(message.clone()) {
+                debug!("Dropping message: filter_message_input returned error: {error:?}");
+                continue 'mainloop;
             }
 
             crate::hub::accumulate_hub_message(&message);
 
-            if let Err(error) = hub_sender.send(message) {
+            if let Err(error) = data_plane.publish(message) {
                 error!("Failed to send message to hub: {error:?}");
             }
         }
@@ -147,12 +150,12 @@ impl TlogReader {
 
 #[async_trait::async_trait]
 impl Driver for TlogReader {
-    #[instrument(level = "debug", skip(self, hub_sender))]
-    async fn run(&self, hub_sender: broadcast::Sender<Arc<Protocol>>) -> Result<()> {
+    #[instrument(level = "debug", skip(self, data_plane))]
+    async fn run(&self, data_plane: DataPlane) -> Result<()> {
         let file = tokio::fs::File::open(self.path.clone()).await?;
         let reader = tokio::io::BufReader::with_capacity(1024, file);
 
-        TlogReader::handle_file(self, reader, hub_sender).await
+        TlogReader::handle_file(self, reader, data_plane).await
     }
 
     #[instrument(level = "debug", skip(self))]
@@ -240,7 +243,7 @@ mod tests {
     use super::*;
     #[tokio::test]
     async fn read_all_messages() -> Result<()> {
-        let (sender, _receiver) = tokio::sync::broadcast::channel(1000000);
+        let data_plane = crate::hub::DataPlane::new(1000000);
 
         let messages_received_per_id =
             Arc::new(RwLock::new(BTreeMap::<u32, Vec<Arc<Protocol>>>::new()));
@@ -272,8 +275,8 @@ mod tests {
             .build();
 
         let receiver_task_handle = tokio::spawn({
-            let sender = sender.clone();
-            async move { driver.run(sender).await }
+            let data_plane = data_plane.clone();
+            async move { driver.run(data_plane).await }
         });
 
         // let file_v1_messages = 2; // TODO:  Add support for V1 messages
