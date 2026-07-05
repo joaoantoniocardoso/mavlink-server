@@ -5,6 +5,7 @@ pub mod hub;
 pub mod logger;
 pub mod mavlink_json;
 pub mod protocol;
+pub mod runtime;
 pub mod stats;
 pub mod time;
 pub mod web;
