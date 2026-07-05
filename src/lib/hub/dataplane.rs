@@ -95,3 +95,68 @@ impl SinkReceiver {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        sync::Arc,
+        time::{Duration, Instant},
+    };
+
+    use super::*;
+    use crate::protocol::Protocol;
+    use bytes::BufMut;
+    use mavlink::{Message, MessageData};
+    use mavlink_codec::{Packet, v2::V2Packet};
+
+    fn heartbeat_frame(origin: Arc<str>) -> Arc<Protocol> {
+        let header = mavlink::MavHeader::default();
+        let data = mavlink::dialects::ardupilotmega::MavMessage::default_message_from_id(
+            mavlink::dialects::ardupilotmega::HEARTBEAT_DATA::ID,
+        )
+        .unwrap();
+        let buf = bytes::BytesMut::with_capacity(V2Packet::MAX_PACKET_SIZE);
+        let mut writer = buf.writer();
+        mavlink::write_v2_msg(&mut writer, header, &data).unwrap();
+        let packet = Packet::V2(V2Packet::new(writer.into_inner().freeze()));
+        Arc::new(Protocol::new_with_timestamp(0, origin, packet))
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn slow_consumer_does_not_block_other_sinks() {
+        let data_plane = DataPlane::new(256);
+        let origin: Arc<str> = Arc::from("source");
+
+        let slow_plane = data_plane.clone();
+        tokio::spawn(async move {
+            let mut sink = slow_plane.register_sink();
+            while let Some(_message) = sink.recv_next().await {
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        });
+
+        let mut fast_sink = data_plane.register_sink_with_origin("fast");
+
+        let publish_count = 5;
+        for _ in 0..publish_count {
+            let frame = heartbeat_frame(Arc::clone(&origin));
+            let sent_at = Instant::now();
+            data_plane.publish(frame).unwrap();
+
+            let received = tokio::time::timeout(Duration::from_millis(20), async {
+                loop {
+                    if fast_sink.recv_next().await.is_some() {
+                        return sent_at.elapsed();
+                    }
+                }
+            })
+            .await
+            .expect("fast sink should receive before slow consumer blocks the runtime");
+
+            assert!(
+                received < Duration::from_millis(15),
+                "forwarding latency {received:?} exceeded threshold with slow consumer present"
+            );
+        }
+    }
+}
