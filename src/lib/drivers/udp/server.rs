@@ -15,6 +15,7 @@ use crate::{
         udp::udp_send_task,
     },
     protocol::Protocol,
+    runtime,
     stats::{
         accumulated::driver::{
             AccumulatedDriverStats, AccumulatedDriverStatsProvider, AtomicDriverStats,
@@ -298,7 +299,7 @@ fn spawn_send_task(
     let codec = MavlinkCodec::<true, true, false, false, false, false, false>::default();
     let (mut writer, _reader) = UdpFramed::new(socket.clone(), codec).split();
 
-    tokio::spawn({
+    runtime::spawn_data({
         let context = context.clone();
         async move { udp_send_task(&mut writer, &client_addr, &context).await }
     })

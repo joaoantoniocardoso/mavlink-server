@@ -33,7 +33,9 @@ pub fn spawn_message_observers(
         return;
     }
 
-    tokio::spawn(async move {
+    let control = crate::runtime::handles().control;
+
+    crate::runtime::spawn_data(async move {
         let mut sink = match loopback_origin {
             Some(origin) => data_plane.register_sink_with_origin(origin),
             None => data_plane.register_sink(),
@@ -44,9 +46,12 @@ pub fn spawn_message_observers(
                 break;
             };
 
-            for future in observers.call_all(message) {
-                let _ = future.await;
-            }
+            let observers = observers.clone();
+            control.spawn(async move {
+                for future in observers.call_all(message) {
+                    let _ = future.await;
+                }
+            });
         }
     });
 }

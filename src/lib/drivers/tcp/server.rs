@@ -17,6 +17,7 @@ use crate::{
         generic_tasks::{SendReceiveContext, default_send_receive_run},
     },
     protocol::Protocol,
+    runtime,
     stats::{
         accumulated::driver::{
             AccumulatedDriverStats, AccumulatedDriverStatsProvider, AtomicDriverStats,
@@ -149,7 +150,7 @@ impl Driver for TcpServer {
                 Ok((socket, remote_addr)) => {
                     let remote_addr = remote_addr.to_string();
 
-                    tokio::spawn(TcpServer::handle_client(
+                    runtime::spawn_data(TcpServer::handle_client(
                         socket,
                         remote_addr,
                         context.clone(),

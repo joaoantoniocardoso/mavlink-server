@@ -4,13 +4,10 @@ use std::sync::{
 };
 
 use anyhow::{Result, anyhow};
+use tokio::sync::mpsc;
 use tracing::*;
 
-use crate::{
-    hub,
-    hub::dataplane::{SinkReceiver, SinkRecvError},
-    protocol::Protocol,
-};
+use crate::{hub, protocol::Protocol};
 
 use super::protocol::{FtpOpcode, FtpPayload};
 
@@ -23,8 +20,8 @@ pub(super) fn new_request(opcode: FtpOpcode) -> FtpPayload {
 }
 
 #[instrument(level = "debug")]
-pub(super) async fn subscribe() -> Result<SinkReceiver> {
-    hub::register_sink(None).await
+pub(super) async fn subscribe() -> Result<mpsc::Receiver<Arc<Protocol>>> {
+    hub::register_control_sink(None).await
 }
 
 #[instrument(
@@ -42,47 +39,39 @@ pub(super) fn send_ftp_message(target_system: u8, target_component: u8, payload:
 
 #[instrument(level = "debug", skip(receiver))]
 pub(super) async fn recv_ftp(
-    receiver: &mut SinkReceiver,
+    receiver: &mut mpsc::Receiver<Arc<Protocol>>,
     target_system: u8,
     target_component: u8,
     expected_seq: Option<u16>,
 ) -> Result<FtpPayload> {
     loop {
-        match receiver.recv().await {
-            Ok(protocol) => {
-                if protocol.message_id() != Some(FTP_MESSAGE_ID)
-                    || protocol.system_id() != Some(target_system)
-                    || protocol.component_id() != Some(target_component)
-                {
-                    continue;
-                }
+        let Some(protocol) = receiver.recv().await else {
+            return Err(anyhow!("Hub control sink closed"));
+        };
 
-                let Ok((_header, msg)) = protocol
-                    .to_mavlink::<mavlink::dialects::ardupilotmega::MavMessage>()
-                    .await
-                else {
-                    continue;
-                };
+        if protocol.message_id() != Some(FTP_MESSAGE_ID)
+            || protocol.system_id() != Some(target_system)
+            || protocol.component_id() != Some(target_component)
+        {
+            continue;
+        }
 
-                if let mavlink::dialects::ardupilotmega::MavMessage::FILE_TRANSFER_PROTOCOL(ftp) =
-                    msg
-                {
-                    let resp = FtpPayload::decode(&ftp.payload)?;
-                    if let Some(seq) = expected_seq
-                        && (resp.seq_number != seq + 1
-                            || (resp.opcode != FtpOpcode::Ack && resp.opcode != FtpOpcode::Nak))
-                    {
-                        continue;
-                    }
-                    return Ok(resp);
-                }
+        let Ok((_header, msg)) = protocol
+            .to_mavlink::<mavlink::dialects::ardupilotmega::MavMessage>()
+            .await
+        else {
+            continue;
+        };
+
+        if let mavlink::dialects::ardupilotmega::MavMessage::FILE_TRANSFER_PROTOCOL(ftp) = msg {
+            let resp = FtpPayload::decode(&ftp.payload)?;
+            if let Some(seq) = expected_seq
+                && (resp.seq_number != seq + 1
+                    || (resp.opcode != FtpOpcode::Ack && resp.opcode != FtpOpcode::Nak))
+            {
+                continue;
             }
-            Err(SinkRecvError::Lagged(count)) => {
-                warn!("FTP hub receiver lagged by {count} messages");
-            }
-            Err(SinkRecvError::Closed) => {
-                return Err(anyhow!("Hub broadcast channel closed"));
-            }
+            return Ok(resp);
         }
     }
 }

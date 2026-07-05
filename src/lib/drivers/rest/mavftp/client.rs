@@ -9,10 +9,10 @@ use std::{
 use anyhow::{Context, Result, anyhow};
 use byteorder::{LittleEndian, ReadBytesExt};
 use lazy_static::lazy_static;
-use tokio::sync::{Mutex, RwLock, broadcast};
+use tokio::sync::{Mutex, RwLock, mpsc};
 use tracing::*;
 
-use crate::{hub::dataplane::SinkReceiver, protocol::Protocol};
+use crate::protocol::Protocol;
 
 use super::{
     FtpClientError,
@@ -404,7 +404,7 @@ async fn run_burst_cycle(
     system_id: u8,
     component_id: u8,
     session: u8,
-    hub_receiver: &mut SinkReceiver,
+    hub_receiver: &mut mpsc::Receiver<Arc<Protocol>>,
     state: &mut BurstReadState,
     retries: &mut u32,
     progress: Option<&AtomicU64>,

@@ -192,7 +192,7 @@ impl Rest {
             }
 
             let message = message.clone();
-            tokio::spawn(async move {
+            crate::runtime::spawn_control(async move {
                 let Ok(mavlink_json) = message
                     .to_mavlink_json::<mavlink::dialects::ardupilotmega::MavMessage>()
                     .await
