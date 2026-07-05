@@ -1,12 +1,16 @@
 use anyhow::*;
-use mavlink_server::{cli, hub, logger, web};
+use mavlink_server::{cli, hub, logger, runtime::PlaneRuntimes, web};
 use tracing::*;
 
-#[tokio::main(flavor = "multi_thread")]
-async fn main() -> Result<()> {
-    // CLI should be started before logger to allow control over verbosity
+fn main() -> Result<()> {
     cli::init();
-    // Logger should start before everything else to register any log information
+
+    let runtimes = PlaneRuntimes::start();
+
+    runtimes.block_on(async_main())
+}
+
+async fn async_main() -> Result<()> {
     logger::init(cli::log_path(), cli::is_verbose(), cli::is_tracing());
 
     info!(
@@ -23,6 +27,8 @@ async fn main() -> Result<()> {
     debug!("Command line call: {}", cli::command_line_string());
     debug!("Command line input struct call: {}", cli::command_line());
 
+    hub::init();
+
     for driver in cli::endpoints() {
         hub::add_driver(driver).await?;
     }
@@ -30,7 +36,6 @@ async fn main() -> Result<()> {
     if cli::no_web() {
         tokio::signal::ctrl_c().await?;
     } else {
-        // This will block until the web server is stopped, with this, the application ends
         web::run(cli::web_server()).await;
     }
 
