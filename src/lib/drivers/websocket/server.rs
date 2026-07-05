@@ -9,7 +9,7 @@ use axum::{
 };
 use futures::StreamExt;
 use mavlink_codec::codec::MavlinkCodec;
-use tokio::{net::TcpListener, sync::broadcast};
+use tokio::net::TcpListener;
 use tower::ServiceBuilder;
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
 use tracing::*;
@@ -23,6 +23,7 @@ use crate::{
         websocket::server_adapter::WebSocketServerAdapter,
     },
     protocol::Protocol,
+    runtime,
     stats::{
         accumulated::driver::{
             AccumulatedDriverStats, AccumulatedDriverStatsProvider, AtomicDriverStats,
@@ -97,15 +98,15 @@ impl WebSocketServerDriver {
     #[instrument(level = "debug", skip(socket, context))]
     async fn handle_client(
         socket: WebSocket,
-        context: &SendReceiveContext,
-        identifier: &str,
+        context: SendReceiveContext,
+        identifier: String,
     ) -> Result<()> {
         debug!("New WebSocket client");
 
         let codec = MavlinkCodec::<true, true, false, false, false, false, false>::default();
         let (writer, reader) = WebSocketServerAdapter::new(socket, codec).split();
 
-        if let Err(reason) = default_send_receive_run(writer, reader, identifier, context).await {
+        if let Err(reason) = default_send_receive_run(writer, reader, &identifier, &context).await {
             warn!("Driver send/receive tasks closed: {reason:?}");
         }
 
@@ -161,18 +162,27 @@ impl Driver for WebSocketServerDriver {
                 context: SendReceiveContext,
             ) -> Response {
                 ws.on_upgrade(move |socket| {
-                    let identifier = Uuid::new_v4();
+                    let context = context.clone();
+                    let identifier = Uuid::new_v4().to_string();
                     debug!("WS client connected with ID: {identifier}");
 
                     async move {
-                        if let Err(error) = WebSocketServerDriver::handle_client(
+                        match runtime::spawn_data(WebSocketServerDriver::handle_client(
                             socket,
-                            &context,
-                            &identifier.to_string(),
-                        )
+                            context,
+                            identifier.clone(),
+                        ))
                         .await
                         {
-                            warn!("WebSocket connection {identifier} closed: {error:?}");
+                            Ok(Err(error)) => {
+                                warn!("WebSocket connection {identifier} closed: {error:?}");
+                            }
+                            Err(join_error) => {
+                                warn!(
+                                    "WebSocket connection {identifier} task failed: {join_error:?}"
+                                );
+                            }
+                            Ok(Ok(())) => {}
                         }
                         debug!("WS client {identifier} removed");
                     }
