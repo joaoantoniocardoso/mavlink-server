@@ -46,6 +46,10 @@ impl<T> Callbacks<T> {
         callbacks.shift_remove(&id);
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.callbacks.lock().unwrap().is_empty()
+    }
+
     pub fn call_all(&self, msg: T) -> Vec<BoxFuture<'static, Result<()>>>
     where
         T: Clone,
@@ -55,6 +59,55 @@ impl<T> Callbacks<T> {
             .values()
             .map(|callback| callback.call(msg.clone()))
             .collect()
+    }
+}
+
+#[derive(Clone)]
+pub struct SyncMessageFilters<T> {
+    filters: Arc<Mutex<IndexMap<usize, Arc<dyn Fn(T) -> Result<()> + Send + Sync>>>>,
+}
+
+impl<T> Default for SyncMessageFilters<T> {
+    fn default() -> Self {
+        Self {
+            filters: Arc::new(Mutex::new(IndexMap::new())),
+        }
+    }
+}
+
+impl<T> std::fmt::Debug for SyncMessageFilters<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SyncMessageFilters").finish()
+    }
+}
+
+impl<T> SyncMessageFilters<T> {
+    pub fn add_filter<F>(&self, filter: F) -> usize
+    where
+        F: Fn(T) -> Result<()> + Send + Sync + 'static,
+    {
+        static COUNTER: AtomicUsize = AtomicUsize::new(0);
+        let filter_id = COUNTER.fetch_add(1, Ordering::Relaxed);
+
+        let mut filters = self.filters.lock().unwrap();
+        filters.insert(filter_id, Arc::new(filter));
+
+        filter_id
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.filters.lock().unwrap().is_empty()
+    }
+
+    pub fn apply_all(&self, msg: T) -> Result<()>
+    where
+        T: Clone,
+    {
+        let filters = self.filters.lock().unwrap();
+        for filter in filters.values() {
+            filter(msg.clone())?;
+        }
+        Ok(())
     }
 }
 
