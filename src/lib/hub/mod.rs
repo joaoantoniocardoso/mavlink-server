@@ -1,4 +1,5 @@
 mod actor;
+pub mod dataplane;
 mod protocol;
 
 use std::sync::{Arc, Mutex};
@@ -8,7 +9,7 @@ use anyhow::{Result, anyhow};
 use indexmap::IndexMap;
 use lazy_static::lazy_static;
 use protocol::HubCommand;
-use tokio::sync::{RwLock, broadcast, mpsc, oneshot};
+use tokio::sync::{RwLock, mpsc, oneshot};
 
 use crate::{
     cli,
@@ -116,15 +117,31 @@ pub async fn drivers() -> Result<IndexMap<DriverUuid, Box<dyn DriverInfo>>> {
     Ok(res)
 }
 
-pub async fn sender() -> Result<broadcast::Sender<Arc<Protocol>>> {
+pub use dataplane::{DataPlane, PublishError, SinkReceiver, SinkRecvError};
+
+pub async fn data_plane() -> Result<DataPlane> {
     let (response_tx, response_rx) = oneshot::channel();
     HUB.sender
         .send(HubCommand::GetSender {
             response: response_tx,
         })
         .await?;
-    let res = response_rx.await?;
-    Ok(res)
+    response_rx.await.map_err(|_| anyhow!("Hub actor dropped"))
+}
+
+pub async fn register_sink(loopback_origin: Option<Arc<str>>) -> Result<SinkReceiver> {
+    let (response_tx, response_rx) = oneshot::channel();
+    HUB.sender
+        .send(HubCommand::RegisterSink {
+            loopback_origin,
+            response: response_tx,
+        })
+        .await?;
+    response_rx.await.map_err(|_| anyhow!("Hub actor dropped"))
+}
+
+pub async fn sender() -> Result<DataPlane> {
+    data_plane().await
 }
 
 pub async fn drivers_stats() -> Result<AccumulatedDriversStats> {

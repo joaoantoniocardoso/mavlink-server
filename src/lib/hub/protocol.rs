@@ -6,6 +6,7 @@ use tokio::sync::{broadcast, oneshot};
 
 use crate::{
     drivers::{Driver, DriverInfo},
+    hub::dataplane::{DataPlane, SinkReceiver},
     protocol::Protocol,
     stats::{
         accumulated::{
@@ -29,7 +30,11 @@ pub enum HubCommand {
         response: oneshot::Sender<IndexMap<DriverUuid, Box<dyn DriverInfo>>>,
     },
     GetSender {
-        response: oneshot::Sender<broadcast::Sender<Arc<Protocol>>>,
+        response: oneshot::Sender<DataPlane>,
+    },
+    RegisterSink {
+        loopback_origin: Option<Arc<str>>,
+        response: oneshot::Sender<SinkReceiver>,
     },
     GetHubStats {
         response: oneshot::Sender<AccumulatedStatsInner>,

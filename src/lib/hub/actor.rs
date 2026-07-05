@@ -8,7 +8,7 @@ use tracing::*;
 use crate::{
     cli,
     drivers::{Driver, DriverInfo},
-    hub::HubCommand,
+    hub::{HubCommand, dataplane::DataPlane},
     protocol::Protocol,
     stats::{
         accumulated::{
@@ -22,7 +22,8 @@ use crate::{
 #[allow(dead_code)]
 pub struct HubActor {
     drivers: IndexMap<DriverUuid, DriverRunner>,
-    bcst_sender: broadcast::Sender<Arc<Protocol>>,
+    data_plane: DataPlane,
+    sink_count: usize,
     component_id: Arc<RwLock<u8>>,
     system_id: Arc<RwLock<u8>>,
     heartbeat_task: tokio::task::JoinHandle<Result<()>>,
@@ -63,6 +64,17 @@ impl HubActor {
                 HubCommand::GetSender { response } => {
                     let _ = response.send(self.get_sender());
                 }
+                HubCommand::RegisterSink {
+                    loopback_origin,
+                    response,
+                } => {
+                    let sink = match loopback_origin {
+                        Some(origin) => self.data_plane.register_sink_with_origin(origin),
+                        None => self.data_plane.register_sink(),
+                    };
+                    self.sink_count += 1;
+                    let _ = response.send(sink);
+                }
                 HubCommand::GetDriversStats { response } => {
                     let drivers_stats = self.get_drivers_stats().await;
                     let _ = response.send(drivers_stats);
@@ -89,20 +101,21 @@ impl HubActor {
         system_id: Arc<RwLock<u8>>,
         frequency: Arc<RwLock<f32>>,
     ) -> Self {
-        let (bcst_sender, _) = broadcast::channel(buffer_size);
+        let data_plane = DataPlane::new(buffer_size);
 
         let heartbeat_task = tokio::spawn({
-            let bcst_sender = bcst_sender.clone();
+            let data_plane = data_plane.clone();
             let component_id = component_id.clone();
             let system_id = system_id.clone();
             let frequency = frequency.clone();
 
-            Self::heartbeat_task(bcst_sender, component_id, system_id, frequency)
+            Self::heartbeat_task(data_plane, component_id, system_id, frequency)
         });
 
         Self {
             drivers: IndexMap::new(),
-            bcst_sender,
+            data_plane,
+            sink_count: 0,
             component_id,
             system_id,
             heartbeat_task,
@@ -113,13 +126,13 @@ impl HubActor {
     async fn add_driver(&mut self, driver: Arc<dyn Driver>) -> Result<DriverUuid> {
         let uuid = *driver.uuid();
 
-        let hub_sender = self.get_sender();
+        let data_plane = self.get_sender();
 
         let task = tokio::spawn({
             let driver = driver.clone();
 
             async move {
-                while let Err(error) = driver.run(hub_sender.clone()).await {
+                while let Err(error) = driver.run(data_plane.clone()).await {
                     error!(
                         "Driver runner ended with error. Restarting in 1 second... Error: {error:?}"
                     );
@@ -161,7 +174,7 @@ impl HubActor {
     }
 
     async fn heartbeat_task(
-        bcst_sender: broadcast::Sender<Arc<Protocol>>,
+        data_plane: DataPlane,
         system_id: Arc<RwLock<u8>>,
         component_id: Arc<RwLock<u8>>,
         frequency: Arc<RwLock<f32>>,
@@ -204,7 +217,7 @@ impl HubActor {
 
             tokio::time::sleep(duration).await;
 
-            if bcst_sender.receiver_count().eq(&0) {
+            if data_plane.receiver_count().eq(&0) {
                 continue; // Don't try to send if the channel has no subscribers yet
             }
 
@@ -222,8 +235,8 @@ impl HubActor {
 
             crate::hub::accumulate_hub_message(&message);
 
-            if let Err(error) = bcst_sender.send(message) {
-                error!("Failed to send HEARTBEAT message: {error}");
+            if let Err(_error) = data_plane.publish(message) {
+                error!("Failed to send HEARTBEAT message: no receivers");
             }
 
             if do_burst && burst_msgs_counter < burst_size {
@@ -233,8 +246,8 @@ impl HubActor {
     }
 
     #[instrument(level = "debug", skip(self))]
-    fn get_sender(&self) -> broadcast::Sender<Arc<Protocol>> {
-        self.bcst_sender.clone()
+    fn get_sender(&self) -> DataPlane {
+        self.data_plane.clone()
     }
 
     #[instrument(level = "debug", skip(self))]
