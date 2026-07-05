@@ -38,7 +38,7 @@ pub struct AtomicAccumulatedStats {
 
 impl AtomicAccumulatedStats {
     pub fn update(&self, message: &Arc<Protocol>) {
-        let now = chrono::Utc::now().timestamp_micros() as u64;
+        let now = crate::time::now_micros();
 
         self.last_update_us.store(now, Ordering::Relaxed);
         self.bytes
@@ -76,7 +76,7 @@ impl Default for AccumulatedStatsInner {
     fn default() -> Self {
         Self {
             last_message: None,
-            last_update_us: chrono::Utc::now().timestamp_micros() as u64,
+            last_update_us: crate::time::now_micros(),
             messages: 0,
             bytes: 0,
             delay: 0,
@@ -86,7 +86,7 @@ impl Default for AccumulatedStatsInner {
 
 impl AccumulatedStatsInner {
     fn new(message: &Arc<Protocol>) -> Self {
-        let now = chrono::Utc::now().timestamp_micros() as u64;
+        let now = crate::time::now_micros();
         Self {
             last_message: Some(message.clone()),
             last_update_us: now,
@@ -98,7 +98,7 @@ impl AccumulatedStatsInner {
 
     pub fn update(&mut self, message: &Arc<Protocol>) {
         self.last_message = Some(message.clone());
-        self.last_update_us = chrono::Utc::now().timestamp_micros() as u64;
+        self.last_update_us = crate::time::now_micros();
         self.bytes = self.bytes.wrapping_add(message.size() as u64);
         self.messages = self.messages.wrapping_add(1);
         self.delay = self

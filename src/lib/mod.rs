@@ -6,4 +6,5 @@ pub mod logger;
 pub mod mavlink_json;
 pub mod protocol;
 pub mod stats;
+pub mod time;
 pub mod web;

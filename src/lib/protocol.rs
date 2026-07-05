@@ -35,7 +35,7 @@ impl Protocol {
     pub fn new(origin: impl Into<Arc<str>>, packet: Packet) -> Self {
         Self {
             origin: origin.into(),
-            timestamp: chrono::Utc::now().timestamp_micros() as u64,
+            timestamp: crate::time::now_micros(),
             message: MAVLinkMessage::from_packet(packet),
         }
     }
@@ -72,7 +72,7 @@ impl Protocol {
 
         Self {
             origin: origin.into(),
-            timestamp: chrono::Utc::now().timestamp_micros() as u64,
+            timestamp: crate::time::now_micros(),
             message: MAVLinkMessage::from_packet(packet),
         }
     }
@@ -86,7 +86,7 @@ impl Protocol {
         message.message_id()?;
         Some(Self {
             origin: origin.into(),
-            timestamp: chrono::Utc::now().timestamp_micros() as u64,
+            timestamp: crate::time::now_micros(),
             message,
         })
     }
