@@ -164,7 +164,8 @@ impl Zenoh {
     #[instrument(level = "debug", skip_all)]
     async fn send_task(context: &SendReceiveContext, session: Arc<zenoh::Session>) -> Result<()> {
         let mut sink = register_sink(Some(Arc::from(DRIVER_IDENTIFIER))).await?;
-        let mut publishers = HashMap::new();
+        let mut out_publisher: Option<zenoh::pubsub::Publisher<'static>> = None;
+        let mut publishers: HashMap<(u8, u8, u32), MessagePublishers> = HashMap::new();
 
         spawn_message_observers(
             context.data_plane.clone(),
@@ -207,21 +208,52 @@ impl Zenoh {
             let blob = bytes::Bytes::from(blob);
             let json_string = std::str::from_utf8(&blob).unwrap();
 
-            let out_topic_name = format!("{TOPIC_PREFIX}/out");
-            Self::publish_json(&session, &mut publishers, &out_topic_name, json_string).await;
+            if out_publisher.is_none() {
+                out_publisher =
+                    Self::declare_publisher(&session, format!("{TOPIC_PREFIX}/out")).await;
+            }
+            if let Some(publisher) = &out_publisher {
+                Self::put_json(publisher, json_string).await;
+            }
 
-            let message_topic_name = format!(
-                "mavlink/{}/{}/{}",
-                packet.system_id(),
-                packet.component_id(),
-                message_name
+            let key = (
+                *packet.system_id(),
+                *packet.component_id(),
+                packet.message_id(),
             );
-            Self::publish_json(&session, &mut publishers, &message_topic_name, json_string).await;
+            if !publishers.contains_key(&key) {
+                let message_topic_name = format!(
+                    "mavlink/{}/{}/{}",
+                    packet.system_id(),
+                    packet.component_id(),
+                    message_name
+                );
+                let Some(message) =
+                    Self::declare_publisher(&session, message_topic_name.clone()).await
+                else {
+                    continue;
+                };
+                let mut fields = Vec::with_capacity(desc.fields.len());
+                for field in desc.fields.iter() {
+                    let Some(publisher) = Self::declare_publisher(
+                        &session,
+                        format!("{message_topic_name}/{}", field.name),
+                    )
+                    .await
+                    else {
+                        continue 'mainloop;
+                    };
+                    fields.push(publisher);
+                }
+                publishers.insert(key, MessagePublishers { message, fields });
+            }
+            let entry = &publishers[&key];
 
-            for (field, &(start, end)) in desc.fields.iter().zip(ranges.iter()) {
-                let field_topic_name = format!("{message_topic_name}/{}", field.name);
+            Self::put_json(&entry.message, json_string).await;
+
+            for (publisher, &(start, end)) in entry.fields.iter().zip(ranges.iter()) {
                 let field_json = std::str::from_utf8(&blob[start as usize..end as usize]).unwrap();
-                Self::publish_json(&session, &mut publishers, &field_topic_name, field_json).await;
+                Self::put_json(publisher, field_json).await;
             }
         }
 
@@ -230,54 +262,51 @@ impl Zenoh {
         Ok(())
     }
 
-    async fn publish_json(
+    async fn declare_publisher(
         session: &zenoh::Session,
-        publishers: &mut HashMap<String, zenoh::pubsub::Publisher<'static>>,
-        topic_name: &str,
-        payload: &str,
-    ) {
-        if !publishers.contains_key(topic_name) {
-            let topic = topic_name.to_string();
-            let key_expr = match zenoh::key_expr::KeyExpr::try_from(topic.clone()) {
-                Ok(key_expr) => key_expr,
-                Err(error) => {
-                    error!("Failed to create key expression for {topic_name}: {error:?}");
-                    return;
-                }
-            };
-
-            match session
-                .declare_publisher(key_expr)
-                .encoding(zenoh::bytes::Encoding::APPLICATION_JSON.with_schema("mavlink"))
-                .congestion_control(zenoh::qos::CongestionControl::Block)
-                .priority(zenoh::qos::Priority::RealTime)
-                .express(false)
-                .await
-            {
-                Ok(publisher) => {
-                    publishers.insert(topic, publisher);
-                }
-                Err(error) => {
-                    error!("Failed to create publisher for {topic_name}: {error:?}");
-                    return;
-                }
+        topic_name: String,
+    ) -> Option<zenoh::pubsub::Publisher<'static>> {
+        let key_expr = match zenoh::key_expr::KeyExpr::try_from(topic_name.clone()) {
+            Ok(key_expr) => key_expr,
+            Err(error) => {
+                error!("Failed to create key expression for {topic_name}: {error:?}");
+                return None;
             }
-        }
-
-        let Some(publisher) = publishers.get(topic_name) else {
-            return;
         };
 
+        match session
+            .declare_publisher(key_expr)
+            .encoding(zenoh::bytes::Encoding::APPLICATION_JSON.with_schema("mavlink"))
+            .congestion_control(zenoh::qos::CongestionControl::Block)
+            .priority(zenoh::qos::Priority::RealTime)
+            .express(false)
+            .await
+        {
+            Ok(publisher) => Some(publisher),
+            Err(error) => {
+                error!("Failed to create publisher for {topic_name}: {error:?}");
+                None
+            }
+        }
+    }
+
+    async fn put_json(publisher: &zenoh::pubsub::Publisher<'_>, payload: &str) {
         if let Err(error) = publisher
             .put(payload)
             .encoding(zenoh::bytes::Encoding::APPLICATION_JSON)
             .await
         {
-            error!("Failed to send message to {topic_name}: {error:?}");
-        } else {
-            trace!("Message sent to {topic_name}: {payload:?}");
+            error!("Failed to send message: {error:?}");
         }
     }
+}
+
+/// Cached Zenoh publishers for one MAVLink message type, keyed by
+/// `(system_id, component_id, message_id)`. Declaring publishers once per type
+/// avoids re-`format!`-ing topic names and hashing on every message.
+struct MessagePublishers {
+    message: zenoh::pubsub::Publisher<'static>,
+    fields: Vec<zenoh::pubsub::Publisher<'static>>,
 }
 
 #[async_trait::async_trait]
