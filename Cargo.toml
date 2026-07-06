@@ -86,4 +86,6 @@ strip = true
 
 [profile.profiling]
 inherits = "release"
-debug = 1
+debug = 2
+strip = false
+force-frame-pointers = true
