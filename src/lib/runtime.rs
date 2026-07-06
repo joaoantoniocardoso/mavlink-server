@@ -68,9 +68,8 @@ impl PlaneRuntimes {
 
         let data_handle = ready_rx.recv().expect("data-plane handle");
 
-        let control = tokio::runtime::Builder::new_multi_thread()
+        let control = tokio::runtime::Builder::new_current_thread()
             .enable_all()
-            .thread_name("control-plane")
             .build()
             .expect("control-plane runtime");
 
