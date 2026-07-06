@@ -7,8 +7,8 @@ use tracing::*;
 
 use crate::{
     callbacks::{Callbacks, SyncMessageFilters},
+    hub::DataPlane,
     hub::dataplane::SinkReceiver,
-    hub::{DataPlane, register_sink},
     protocol::Protocol,
     stats::accumulated::driver::AtomicDriverStats,
 };
@@ -185,7 +185,9 @@ where
         Some(Arc::clone(&origin)),
     );
 
-    let mut sink = register_sink(Some(origin)).await?;
+    let mut sink = context
+        .data_plane
+        .register_sink_with_origin(Arc::clone(&origin));
 
     'mainloop: loop {
         let Some(message) = sink.recv_next().await else {

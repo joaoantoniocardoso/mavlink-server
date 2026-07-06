@@ -15,11 +15,39 @@ static HANDLES: OnceLock<PlaneHandles> = OnceLock::new();
 
 pub struct PlaneRuntimes {
     control: Runtime,
-    _data_thread: JoinHandle<()>,
+    _data_thread: Option<JoinHandle<()>>,
 }
 
 impl PlaneRuntimes {
     pub fn start() -> Self {
+        if crate::cli::no_web() {
+            Self::start_lean()
+        } else {
+            Self::start_dual_plane()
+        }
+    }
+
+    fn start_lean() -> Self {
+        let control = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("lean runtime");
+
+        let handle = control.handle().clone();
+        HANDLES
+            .set(PlaneHandles {
+                data: handle.clone(),
+                control: handle,
+            })
+            .expect("plane runtimes already initialized");
+
+        Self {
+            control,
+            _data_thread: None,
+        }
+    }
+
+    fn start_dual_plane() -> Self {
         let (ready_tx, ready_rx) = std::sync::mpsc::sync_channel(1);
 
         let data_thread = std::thread::Builder::new()
@@ -40,7 +68,7 @@ impl PlaneRuntimes {
 
         let data_handle = ready_rx.recv().expect("data-plane handle");
 
-        let control = tokio::runtime::Builder::new_current_thread()
+        let control = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .thread_name("control-plane")
             .build()
@@ -57,7 +85,7 @@ impl PlaneRuntimes {
 
         Self {
             control,
-            _data_thread: data_thread,
+            _data_thread: Some(data_thread),
         }
     }
 

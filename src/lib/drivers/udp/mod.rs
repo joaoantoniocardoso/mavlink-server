@@ -6,7 +6,6 @@ use mavlink_codec::Packet;
 use tracing::*;
 
 use super::generic_tasks::{SendReceiveContext, spawn_message_observers};
-use crate::hub::register_sink;
 
 pub mod client;
 pub mod server;
@@ -29,7 +28,9 @@ where
         Some(Arc::clone(&origin)),
     );
 
-    let mut sink = register_sink(Some(origin)).await?;
+    let mut sink = context
+        .data_plane
+        .register_sink_with_origin(Arc::clone(&origin));
 
     'mainloop: loop {
         let Some(message) = sink.recv_next().await else {

@@ -32,7 +32,13 @@ pub fn now_micros() -> u64 {
 }
 
 /// Upper bound on how stale [`now_micros`] can be.
-const REFRESH_INTERVAL: Duration = Duration::from_millis(1);
+fn refresh_interval() -> Duration {
+    if crate::cli::no_web() {
+        Duration::from_millis(50)
+    } else {
+        Duration::from_millis(1)
+    }
+}
 
 static NOW_MICROS: AtomicU64 = AtomicU64::new(0);
 static REFRESHER_STARTED: AtomicBool = AtomicBool::new(false);
@@ -59,7 +65,7 @@ fn ensure_refresher() {
 
     NOW_MICROS.store(real_now_micros(), Ordering::Relaxed);
     handle.spawn(async {
-        let mut interval = tokio::time::interval(REFRESH_INTERVAL);
+        let mut interval = tokio::time::interval(refresh_interval());
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
             interval.tick().await;

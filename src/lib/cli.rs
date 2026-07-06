@@ -214,7 +214,9 @@ pub fn endpoints() -> Vec<Arc<dyn drivers::Driver>> {
 }
 
 pub fn no_web() -> bool {
-    args().no_web
+    MANAGER
+        .get()
+        .is_some_and(|manager| manager.clap_matches.no_web)
 }
 
 #[instrument(level = "debug")]
