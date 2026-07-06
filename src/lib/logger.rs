@@ -115,7 +115,11 @@ pub fn init(log_path: String, is_verbose: bool, is_tracing: bool) {
     let file_env_filter = if is_tracing {
         EnvFilter::new(LevelFilter::TRACE.to_string())
     } else {
-        EnvFilter::new(LevelFilter::DEBUG.to_string())
+        // Keep our own debug logs, but do not let dependency debug/trace spans
+        // (notably zenoh's per-message `#[instrument]` spans) reach the Registry:
+        // materializing them costs ~6% of on-CPU for output never written in
+        // production. Full verbosity remains available via `is_tracing`/`RUST_LOG`.
+        EnvFilter::new("info,mavlink_server=debug")
     };
     let file_appender = custom_rolling_appender(
         log_path,
@@ -138,7 +142,7 @@ pub fn init(log_path: String, is_verbose: bool, is_tracing: bool) {
     let server_env_filter = if cli::is_tracing() {
         EnvFilter::new(LevelFilter::TRACE.to_string())
     } else {
-        EnvFilter::new(LevelFilter::DEBUG.to_string())
+        EnvFilter::new("info,mavlink_server=debug")
     };
     let (tx, mut rx) = tokio::sync::broadcast::channel(100);
     let server_layer = fmt::Layer::new()
