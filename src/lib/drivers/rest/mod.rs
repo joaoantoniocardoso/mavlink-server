@@ -191,6 +191,10 @@ impl Rest {
                 continue 'mainloop;
             }
 
+            if !websocket::has_clients().await {
+                continue 'mainloop;
+            }
+
             let message = message.clone();
             crate::runtime::spawn_control(async move {
                 let Ok(mavlink_json) = message
@@ -213,10 +217,7 @@ impl Rest {
 
                 control::update((header, mavlink_message)).await;
 
-                if websocket::has_clients().await {
-                    websocket::broadcast(uuid, ws::Message::Text(json_text.into_owned().into()))
-                        .await;
-                }
+                websocket::broadcast(uuid, ws::Message::Text(json_text.into_owned().into())).await;
             });
         }
 
