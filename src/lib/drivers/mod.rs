@@ -71,6 +71,14 @@ pub struct DriverDescriptionLegacy {
     arg2: Option<String>,
 }
 
+pub fn driver_uses_zenoh_runtime(driver: &Arc<dyn Driver>) -> bool {
+    driver
+        .info()
+        .valid_schemes()
+        .iter()
+        .any(|scheme| matches!(*scheme, "zenoh" | "zenohraw"))
+}
+
 #[async_trait::async_trait]
 pub trait Driver: Send + Sync + AccumulatedDriverStatsProvider + std::fmt::Debug {
     async fn run(&self, data_plane: crate::hub::DataPlane) -> Result<()>;

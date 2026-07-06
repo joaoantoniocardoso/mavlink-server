@@ -98,6 +98,7 @@ impl Hub {
             system_id,
             frequency,
             handles.data,
+            handles.zenoh,
         );
         let _task = Arc::new(Mutex::new(runtime::spawn_control(hub.start(receiver))));
 

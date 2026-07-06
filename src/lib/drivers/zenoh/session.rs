@@ -4,7 +4,7 @@ use tokio::sync::{OnceCell, watch};
 use tracing::*;
 use zenoh;
 
-use crate::cli::zenoh_config_file;
+use crate::{cli::zenoh_config_file, runtime};
 
 static SESSION_WATCH_RECEIVER: OnceCell<watch::Receiver<Option<Arc<zenoh::Session>>>> =
     OnceCell::const_new();
@@ -19,7 +19,7 @@ pub(crate) async fn session() -> Arc<zenoh::Session> {
         .get_or_init(|| async {
             let (sender, receiver) = watch::channel(None);
 
-            tokio::spawn(open_zenoh_session(sender));
+            runtime::spawn_zenoh(open_zenoh_session(sender));
 
             receiver
         })

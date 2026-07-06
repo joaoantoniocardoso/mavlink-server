@@ -9,6 +9,7 @@ use tokio::{
 pub struct PlaneHandles {
     pub data: Handle,
     pub control: Handle,
+    pub zenoh: Handle,
 }
 
 static HANDLES: OnceLock<PlaneHandles> = OnceLock::new();
@@ -16,6 +17,7 @@ static HANDLES: OnceLock<PlaneHandles> = OnceLock::new();
 pub struct PlaneRuntimes {
     control: Runtime,
     _data_thread: Option<JoinHandle<()>>,
+    _zenoh_thread: Option<JoinHandle<()>>,
 }
 
 impl PlaneRuntimes {
@@ -37,18 +39,21 @@ impl PlaneRuntimes {
         HANDLES
             .set(PlaneHandles {
                 data: handle.clone(),
-                control: handle,
+                control: handle.clone(),
+                zenoh: handle,
             })
             .expect("plane runtimes already initialized");
 
         Self {
             control,
             _data_thread: None,
+            _zenoh_thread: None,
         }
     }
 
     fn start_dual_plane() -> Self {
-        let (ready_tx, ready_rx) = std::sync::mpsc::sync_channel(1);
+        let (data_ready_tx, data_ready_rx) = std::sync::mpsc::sync_channel(1);
+        let (zenoh_ready_tx, zenoh_ready_rx) = std::sync::mpsc::sync_channel(1);
 
         let data_thread = std::thread::Builder::new()
             .name("data-plane".into())
@@ -58,7 +63,7 @@ impl PlaneRuntimes {
                     .build()
                     .expect("data-plane runtime");
 
-                ready_tx
+                data_ready_tx
                     .send(data.handle().clone())
                     .expect("data-plane handle");
 
@@ -66,7 +71,25 @@ impl PlaneRuntimes {
             })
             .expect("data-plane thread");
 
-        let data_handle = ready_rx.recv().expect("data-plane handle");
+        let zenoh_thread = std::thread::Builder::new()
+            .name("zenoh-plane".into())
+            .spawn(move || {
+                let zenoh = tokio::runtime::Builder::new_multi_thread()
+                    .enable_all()
+                    .thread_name("zenoh-runtime")
+                    .build()
+                    .expect("zenoh runtime");
+
+                zenoh_ready_tx
+                    .send(zenoh.handle().clone())
+                    .expect("zenoh handle");
+
+                zenoh.block_on(async { std::future::pending::<()>().await });
+            })
+            .expect("zenoh-plane thread");
+
+        let data_handle = data_ready_rx.recv().expect("data-plane handle");
+        let zenoh_handle = zenoh_ready_rx.recv().expect("zenoh handle");
 
         let control = tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -76,6 +99,7 @@ impl PlaneRuntimes {
         let handles = PlaneHandles {
             data: data_handle,
             control: control.handle().clone(),
+            zenoh: zenoh_handle,
         };
 
         HANDLES
@@ -85,6 +109,7 @@ impl PlaneRuntimes {
         Self {
             control,
             _data_thread: Some(data_thread),
+            _zenoh_thread: Some(zenoh_thread),
         }
     }
 
@@ -113,6 +138,14 @@ where
     handles().control.spawn(future)
 }
 
+pub fn spawn_zenoh<F, T>(future: F) -> TaskJoinHandle<T>
+where
+    F: Future<Output = T> + Send + 'static,
+    T: Send + 'static,
+{
+    handles().zenoh.spawn(future)
+}
+
 pub fn ensure_handles() -> PlaneHandles {
     if let Some(handles) = HANDLES.get() {
         return handles.clone();
@@ -121,7 +154,8 @@ pub fn ensure_handles() -> PlaneHandles {
     let handle = Handle::try_current().expect("no tokio runtime and plane runtimes not started");
     let unified = PlaneHandles {
         data: handle.clone(),
-        control: handle,
+        control: handle.clone(),
+        zenoh: handle,
     };
     let _ = HANDLES.set(unified.clone());
     unified

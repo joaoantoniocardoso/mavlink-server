@@ -7,7 +7,7 @@ use tracing::*;
 
 use crate::{
     cli,
-    drivers::{Driver, DriverInfo},
+    drivers::{Driver, DriverInfo, driver_uses_zenoh_runtime},
     hub::{HubCommand, dataplane::DataPlane},
     protocol::Protocol,
     stats::{
@@ -25,6 +25,7 @@ pub struct HubActor {
     data_plane: DataPlane,
     sink_count: usize,
     data_handle: tokio::runtime::Handle,
+    zenoh_handle: tokio::runtime::Handle,
     component_id: Arc<RwLock<u8>>,
     system_id: Arc<RwLock<u8>>,
     heartbeat_task: tokio::task::JoinHandle<Result<()>>,
@@ -102,6 +103,7 @@ impl HubActor {
         system_id: Arc<RwLock<u8>>,
         frequency: Arc<RwLock<f32>>,
         data_handle: tokio::runtime::Handle,
+        zenoh_handle: tokio::runtime::Handle,
     ) -> Self {
         let data_plane = DataPlane::new(buffer_size);
 
@@ -119,6 +121,7 @@ impl HubActor {
             data_plane,
             sink_count: 0,
             data_handle,
+            zenoh_handle,
             component_id,
             system_id,
             heartbeat_task,
@@ -131,7 +134,13 @@ impl HubActor {
 
         let data_plane = self.get_sender();
 
-        let task = self.data_handle.spawn({
+        let driver_handle = if driver_uses_zenoh_runtime(&driver) {
+            self.zenoh_handle.clone()
+        } else {
+            self.data_handle.clone()
+        };
+
+        let task = driver_handle.spawn({
             let driver = driver.clone();
 
             async move {
