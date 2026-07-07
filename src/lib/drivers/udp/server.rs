@@ -243,7 +243,7 @@ where
         trace!(origin = ?client_addr, "Received message: {message:?}");
 
         if context.direction.can_receive() {
-            context.stats.update_input(&message);
+            context.stats.note_input(&message);
 
             if let Err(error) = context.filter_message_input.apply_all(message.clone()) {
                 debug!(origin = ?client_addr, "Dropping message: filter_message_input returned error: {error:?}");

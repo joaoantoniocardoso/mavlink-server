@@ -38,8 +38,18 @@ pub struct AtomicAccumulatedStats {
 
 impl AtomicAccumulatedStats {
     pub fn update(&self, message: &Arc<Protocol>) {
-        let now = crate::time::now_micros();
+        self.record(message, crate::time::now_micros());
+    }
 
+    /// Records stats for a message just timestamped on this thread. Avoids a
+    /// second `clock_gettime` syscall when the update immediately follows
+    /// [`Protocol`] construction; delay contribution is zero, which is correct
+    /// at ingress.
+    pub fn note_ingress(&self, message: &Arc<Protocol>) {
+        self.record(message, message.timestamp);
+    }
+
+    fn record(&self, message: &Arc<Protocol>, now: u64) {
         self.last_update_us.store(now, Ordering::Relaxed);
         self.bytes
             .fetch_add(message.size() as u64, Ordering::Relaxed);
@@ -86,7 +96,7 @@ impl Default for AccumulatedStatsInner {
 
 impl AccumulatedStatsInner {
     fn new(message: &Arc<Protocol>) -> Self {
-        let now = crate::time::now_micros();
+        let now = message.timestamp;
         Self {
             last_message: Some(message.clone()),
             last_update_us: now,

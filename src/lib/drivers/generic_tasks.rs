@@ -145,7 +145,7 @@ where
 
         trace!("Received message: {message:?}");
 
-        context.stats.update_input(&message);
+        context.stats.note_input(&message);
 
         if let Err(error) = context.filter_message_input.apply_all(message.clone()) {
             debug!("Dropping message: filter_message_input returned error: {error:?}");

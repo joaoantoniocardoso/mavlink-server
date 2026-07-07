@@ -71,7 +71,7 @@ impl AtomicHubMessagesStats {
         let key = (system_id, component_id, message_id);
 
         if let Some(entry) = self.entries.read().unwrap().get(&key) {
-            entry.update(message);
+            entry.note_ingress(message);
             return;
         }
 
@@ -82,7 +82,7 @@ impl AtomicHubMessagesStats {
             .entry(key)
             .or_default()
             .clone();
-        entry.update(message);
+        entry.note_ingress(message);
     }
 
     pub fn snapshot(&self) -> AccumulatedHubMessagesStats {

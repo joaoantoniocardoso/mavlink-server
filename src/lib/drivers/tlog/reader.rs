@@ -132,7 +132,7 @@ impl TlogReader {
                 packet,
             ));
 
-            self.stats.update_input(&message);
+            self.stats.note_input(&message);
 
             if let Err(error) = self.filter_message_input.apply_all(message.clone()) {
                 debug!("Dropping message: filter_message_input returned error: {error:?}");

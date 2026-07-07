@@ -104,7 +104,7 @@ impl Driver for FakeSink {
                 break;
             };
 
-            self.stats.update_input(&message);
+            self.stats.note_input(&message);
 
             if self.print_as_bytes {
                 println!("Message received: {message:?}");

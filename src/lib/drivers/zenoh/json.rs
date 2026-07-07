@@ -139,7 +139,7 @@ impl Zenoh {
 
             trace!("Received message: {bus_message:?}");
 
-            context.stats.update_input(&bus_message);
+            context.stats.note_input(&bus_message);
 
             if let Err(error) = context.filter_message_input.apply_all(bus_message.clone()) {
                 debug!("Dropping message: filter_message_input returned error: {error:?}");

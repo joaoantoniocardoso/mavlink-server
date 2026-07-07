@@ -33,6 +33,10 @@ impl AtomicDriverStats {
         self.input.update(message);
     }
 
+    pub fn note_input(&self, message: &Arc<Protocol>) {
+        self.input.note_ingress(message);
+    }
+
     pub fn update_output(&self, message: &Arc<Protocol>) {
         self.output.update(message);
     }

@@ -231,7 +231,7 @@ where
 
         trace!(origin = ?remote_addr, "Received message: {message:?}");
 
-        context.stats.update_input(&message);
+        context.stats.note_input(&message);
 
         if let Err(error) = context.filter_message_input.apply_all(message.clone()) {
             debug!(origin = ?remote_addr, "Dropping message: filter_message_input returned error: {error:?}");
