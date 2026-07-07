@@ -85,7 +85,7 @@ pub struct Args {
     #[arg(long, hide = true, default_value = "false")]
     allow_no_endpoints: bool,
 
-    /// Disable the web server and default REST/WebSocket endpoint.
+    /// Disable the web server, default REST/WebSocket driver, and zenoh drivers.
     #[arg(long, hide = true, default_value = "false")]
     no_web: bool,
 
@@ -204,8 +204,14 @@ pub fn log_path() -> String {
 }
 
 pub fn endpoints() -> Vec<Arc<dyn drivers::Driver>> {
-    let mut endpoints = args().endpoints.clone();
-    if !args().no_web {
+    let no_web = args().no_web;
+    let mut endpoints: Vec<Arc<dyn drivers::Driver>> = args()
+        .endpoints
+        .iter()
+        .filter(|driver| !no_web || !drivers::driver_uses_zenoh_runtime(driver))
+        .cloned()
+        .collect();
+    if !no_web {
         endpoints.push(Arc::new(
             crate::drivers::rest::Rest::builder("Rest (default)").build(),
         ));

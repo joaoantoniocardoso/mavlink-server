@@ -22,33 +22,7 @@ pub struct PlaneRuntimes {
 
 impl PlaneRuntimes {
     pub fn start() -> Self {
-        if crate::cli::no_web() {
-            Self::start_lean()
-        } else {
-            Self::start_dual_plane()
-        }
-    }
-
-    fn start_lean() -> Self {
-        let control = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .expect("lean runtime");
-
-        let handle = control.handle().clone();
-        HANDLES
-            .set(PlaneHandles {
-                data: handle.clone(),
-                control: handle.clone(),
-                zenoh: handle,
-            })
-            .expect("plane runtimes already initialized");
-
-        Self {
-            control,
-            _data_thread: None,
-            _zenoh_thread: None,
-        }
+        Self::start_dual_plane()
     }
 
     fn start_dual_plane() -> Self {
