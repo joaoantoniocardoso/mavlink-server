@@ -2465,7 +2465,6 @@ dependencies = [
 [[package]]
 name = "mavlink-codec"
 version = "0.1.0"
-source = "git+https://github.com/joaoantoniocardoso/rust-mavlink-codec?branch=wip2#cff00a38fe9575122488d081f6b70a8f5dabade9"
 dependencies = [
  "bytes",
  "cc",
