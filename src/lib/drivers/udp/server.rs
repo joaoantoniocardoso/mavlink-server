@@ -138,7 +138,9 @@ impl Driver for UdpServer {
             debug!("Waiting for clients...");
 
             let codec = MavlinkCodec::<true, true, false, false, false, false, false>::default();
-            let (_writer, mut reader) = UdpFramed::new(socket.clone(), codec).split();
+            // `Item` must be annotated: codec implements Encoder for both Packet and PacketRef.
+            let (_writer, mut reader) =
+                UdpFramed::new(socket.clone(), codec).split::<(Packet, SocketAddr)>();
 
             if let Err(error) = udp_receive_task(&mut reader, socket, local_addr, &context).await {
                 error!("Error in receive task for {local_addr}: {error:?}");
@@ -297,7 +299,8 @@ fn spawn_send_task(
     context: &SendReceiveContext,
 ) -> JoinHandle<std::result::Result<(), anyhow::Error>> {
     let codec = MavlinkCodec::<true, true, false, false, false, false, false>::default();
-    let (mut writer, _reader) = UdpFramed::new(socket.clone(), codec).split();
+    let (mut writer, _reader) =
+        UdpFramed::new(socket.clone(), codec).split::<(Packet, SocketAddr)>();
 
     runtime::spawn_data({
         let context = context.clone();
