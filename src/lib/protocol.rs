@@ -120,6 +120,11 @@ impl Protocol {
         self.message.component_id()
     }
 
+    /// The MAVLink sequence number, resolved cheaply from whichever representation is present.
+    pub fn sequence(&self) -> Option<u8> {
+        self.message.sequence()
+    }
+
     /// The byte size of the already-materialized representation (wire frame or JSON text), used for
     /// throughput accounting without forcing a transcode.
     pub fn size(&self) -> usize {
